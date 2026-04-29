@@ -102,7 +102,7 @@ func writeAnthropicMessageStart(w io.Writer, msgID, model string, inputTokens in
 }
 
 func (s *GatewayService) streamKiroWebSearchAsAnthropic(
-	ctx context.Context, account *Account, anthropicBody []byte, mappedModel, token string, inputTokens int, headers http.Header, w io.Writer,
+	ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, inputTokens int, headers http.Header, w io.Writer,
 ) error {
 	query := kiropkg.ExtractSearchQuery(anthropicBody)
 	if strings.TrimSpace(query) == "" {
@@ -141,7 +141,7 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 			return errKiroWebSearchFallback
 		}
 
-		resp, _, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, token, headers)
+		resp, _, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
 		if err != nil {
 			return err
 		}
@@ -190,7 +190,7 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 	return fmt.Errorf("kiro web search exceeded max iterations")
 }
 
-func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, token string, headers http.Header) (*kiroWebSearchExecution, error) {
+func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*kiroWebSearchExecution, error) {
 	query := kiropkg.ExtractSearchQuery(anthropicBody)
 	if strings.TrimSpace(query) == "" {
 		return nil, errKiroWebSearchFallback
@@ -227,7 +227,7 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 			return nil, errKiroWebSearchFallback
 		}
 
-		resp, _, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, token, headers)
+		resp, _, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
 		if err != nil {
 			return nil, err
 		}

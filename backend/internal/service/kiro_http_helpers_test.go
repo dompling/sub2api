@@ -10,6 +10,7 @@ import (
 
 	kiropkg "github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestBuildKiroAccountKeyIgnoresAccessToken(t *testing.T) {
@@ -142,6 +143,60 @@ func TestBuildKiroPayloadForAccountPropagatesThinkingHeaders(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(payload), "CHUNKED WRITE PROTOCOL")
 	require.Contains(t, string(payload), "\\u003cthinking_mode\\u003eenabled\\u003c/thinking_mode\\u003e")
+}
+
+func TestBuildKiroPayloadForAccountPreservesThinkingAliasAfterMapping(t *testing.T) {
+	account := &Account{
+		ID:       8,
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+	}
+	body := []byte(`{
+		"model":"claude-opus-4.6",
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+
+	payload, err := buildKiroPayloadForAccount(
+		context.Background(),
+		account,
+		body,
+		"claude-opus-4.6",
+		"kiro-access-token",
+		"claude-opus-4-6-thinking",
+		nil,
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, "claude-opus-4.6", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.modelId").String())
+	systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
+	require.Contains(t, systemContent, "<thinking_mode>adaptive</thinking_mode>")
+	require.Contains(t, systemContent, "<thinking_effort>high</thinking_effort>")
+}
+
+func TestBuildKiroPayloadForAccountDoesNotEnableThinkingForNonThinkingAlias(t *testing.T) {
+	account := &Account{
+		ID:       9,
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+	}
+	body := []byte(`{
+		"model":"claude-opus-4.6",
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+
+	payload, err := buildKiroPayloadForAccount(
+		context.Background(),
+		account,
+		body,
+		"claude-opus-4.6",
+		"kiro-access-token",
+		"claude-opus-4-6",
+		nil,
+	)
+	require.NoError(t, err)
+
+	systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
+	require.NotContains(t, systemContent, "<thinking_mode>")
 }
 
 func TestKiroAPIRegionPrefersAPIRegionOverProfileARN(t *testing.T) {

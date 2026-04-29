@@ -81,7 +81,7 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 	}
 
 	if parsed.Stream {
-		resp, _, err := s.openKiroAnthropicStreamResponse(ctx, account, body, mappedModel, c.Request.Header)
+		resp, _, err := s.openKiroAnthropicStreamResponse(ctx, account, body, mappedModel, originalModel, c.Request.Header)
 		if err != nil {
 			var failoverErr *UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
@@ -146,7 +146,7 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 		return nil, fmt.Errorf("kiro requires oauth token, got %s", tokenType)
 	}
 	if isOnlyWebSearchToolInBody(body) {
-		webSearchResult, webSearchErr := s.executeKiroWebSearch(ctx, account, body, mappedModel, token, c.Request.Header)
+		webSearchResult, webSearchErr := s.executeKiroWebSearch(ctx, account, body, mappedModel, originalModel, token, c.Request.Header)
 		switch {
 		case errors.Is(webSearchErr, errKiroWebSearchFallback):
 		case webSearchErr == nil:
@@ -194,7 +194,7 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 	}
 
 	inputTokens := estimateKiroInputTokens(body)
-	resp, requestCtx, err := s.executeKiroUpstream(ctx, account, body, mappedModel, token, c.Request.Header)
+	resp, requestCtx, err := s.executeKiroUpstream(ctx, account, body, mappedModel, originalModel, token, c.Request.Header)
 	if err != nil {
 		var failoverErr *UpstreamFailoverError
 		if errors.As(err, &failoverErr) {
@@ -253,7 +253,7 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 	}, nil
 }
 
-func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, account *Account, anthropicBody []byte, mappedModel string, headers http.Header) (*http.Response, int, error) {
+func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel string, headers http.Header) (*http.Response, int, error) {
 	token, tokenType, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		return nil, 0, err
@@ -268,7 +268,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		headers := make(http.Header)
 		headers.Set("Content-Type", "text/event-stream")
 		go func() {
-			streamErr := s.streamKiroWebSearchAsAnthropic(ctx, account, anthropicBody, mappedModel, token, inputTokens, headers, pw)
+			streamErr := s.streamKiroWebSearchAsAnthropic(ctx, account, anthropicBody, mappedModel, requestModel, token, inputTokens, headers, pw)
 			if streamErr != nil {
 				_ = pw.CloseWithError(streamErr)
 				return
@@ -282,7 +282,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		}, inputTokens, nil
 	}
 
-	resp, requestCtx, err := s.executeKiroUpstream(ctx, account, anthropicBody, mappedModel, token, headers)
+	resp, requestCtx, err := s.executeKiroUpstream(ctx, account, anthropicBody, mappedModel, requestModel, token, headers)
 	if err != nil {
 		var failoverErr *UpstreamFailoverError
 		if errors.As(err, &failoverErr) {
@@ -318,7 +318,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 	}, inputTokens, nil
 }
 
-func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {
+func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {
 	var requestCtx kiropkg.KiroRequestContext
 	if err := s.checkAndWaitKiroCooldown(ctx, buildKiroAccountKey(account)); err != nil {
 		if failoverErr := asKiroCooldownFailoverError(err); failoverErr != nil {
@@ -329,7 +329,7 @@ func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Accou
 
 	modelID := kiropkg.MapModel(mappedModel)
 	currentToken := token
-	buildResult, err := buildKiroPayloadForAccountWithRepo(ctx, s.accountRepo, account, anthropicBody, modelID, currentToken, mappedModel, headers)
+	buildResult, err := buildKiroPayloadForAccountWithRepo(ctx, s.accountRepo, account, anthropicBody, modelID, currentToken, requestModel, headers)
 	if err != nil {
 		return nil, requestCtx, err
 	}
@@ -432,7 +432,7 @@ func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Accou
 					if refreshErr == nil && strings.TrimSpace(refreshedToken) != "" {
 						currentToken = refreshedToken
 						accountKey = buildKiroAccountKey(account)
-						buildResult, err = buildKiroPayloadForAccountWithRepo(ctx, s.accountRepo, account, anthropicBody, modelID, currentToken, mappedModel, headers)
+						buildResult, err = buildKiroPayloadForAccountWithRepo(ctx, s.accountRepo, account, anthropicBody, modelID, currentToken, requestModel, headers)
 						if err != nil {
 							return nil, requestCtx, err
 						}
@@ -501,7 +501,23 @@ func buildKiroPayloadForAccount(ctx context.Context, account *Account, anthropic
 
 func buildKiroPayloadForAccountWithRepo(ctx context.Context, repo AccountRepository, account *Account, anthropicBody []byte, modelID, token, requestModel string, headers http.Header) (*kiropkg.KiroBuildResult, error) {
 	profileArn := resolveKiroPayloadProfileArn(account)
+	anthropicBody = prepareKiroPayloadBodyForRequestModel(anthropicBody, requestModel)
 	return kiropkg.BuildKiroPayloadWithContext(anthropicBody, modelID, profileArn, "AI_EDITOR", headers)
+}
+
+func prepareKiroPayloadBodyForRequestModel(anthropicBody []byte, requestModel string) []byte {
+	requestModel = strings.TrimSpace(requestModel)
+	if requestModel == "" || !strings.Contains(strings.ToLower(requestModel), "thinking") {
+		return anthropicBody
+	}
+	bodyModel := strings.TrimSpace(gjson.GetBytes(anthropicBody, "model").String())
+	if bodyModel == "" || strings.EqualFold(bodyModel, requestModel) || strings.Contains(strings.ToLower(bodyModel), "thinking") {
+		return anthropicBody
+	}
+	if next, ok := setJSONValueBytes(anthropicBody, "model", requestModel); ok {
+		return next
+	}
+	return anthropicBody
 }
 
 func (s *GatewayService) markKiroAuthTemporarilyUnavailable(ctx context.Context, account *Account, statusCode int, body string) {

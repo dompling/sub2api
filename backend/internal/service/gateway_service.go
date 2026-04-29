@@ -912,6 +912,7 @@ type claudeOAuthNormalizeOptions struct {
 	injectMetadata          bool
 	metadataUserID          string
 	stripSystemCacheControl bool
+	preserveToolChoice      bool
 }
 
 // sanitizeSystemText rewrites only the fixed OpenCode identity sentence (if present).
@@ -1122,6 +1123,12 @@ func normalizeClaudeOAuthRequestBody(body []byte, modelID string, opts claudeOAu
 	// 策略：客户端传了什么就透传；没传则补默认 1。
 	if !gjson.GetBytes(out, "temperature").Exists() {
 		if next, ok := setJSONValueBytes(out, "temperature", 1); ok {
+			out = next
+			modified = true
+		}
+	}
+	if !opts.preserveToolChoice && gjson.GetBytes(out, "tool_choice").Exists() {
+		if next, ok := deleteJSONPathBytes(out, "tool_choice"); ok {
 			out = next
 			modified = true
 		}
@@ -4518,7 +4525,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		// system 被重写时保留 CC prompt 的 cache_control: ephemeral（匹配真实 Claude Code 行为）；
 		// 未重写时（haiku / 已含 CC 前缀）剥离客户端 cache_control，与原有行为一致。
 		// 两种情况下 enforceCacheControlLimit 都会兜底处理上限。
-		normalizeOpts := claudeOAuthNormalizeOptions{stripSystemCacheControl: !systemRewritten}
+		normalizeOpts := claudeOAuthNormalizeOptions{
+			stripSystemCacheControl: !systemRewritten,
+			preserveToolChoice:      account.Platform == PlatformKiro,
+		}
 		if s.identityService != nil {
 			fp, err := s.identityService.GetOrCreateFingerprint(ctx, account.ID, c.Request.Header)
 			if err == nil && fp != nil {
@@ -8966,6 +8976,10 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	// 返回 nil 避免 handler 层记录为错误，也不设置 ops 上游错误上下文。
 	if account.Platform == PlatformAntigravity {
 		s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported for this platform")
+		return nil
+	}
+	if account.Platform == PlatformKiro && account.Type == AccountTypeOAuth {
+		s.countTokensError(c, http.StatusNotFound, "not_found_error", "Token counting is not supported for this platform")
 		return nil
 	}
 

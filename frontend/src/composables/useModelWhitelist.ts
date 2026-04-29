@@ -23,13 +23,21 @@ export const claudeModels = [
   'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620',
   'claude-3-5-haiku-20241022',
   'claude-3-7-sonnet-20250219',
+  'claude-sonnet-4-20250514-thinking', 'claude-opus-4-20250514-thinking',
   'claude-sonnet-4-20250514', 'claude-opus-4-20250514',
   'claude-opus-4-1-20250805',
+  'claude-sonnet-4-5-thinking', 'claude-sonnet-4-5-20250929-thinking',
+  'claude-haiku-4-5-thinking', 'claude-haiku-4-5-20251001-thinking',
+  'claude-opus-4-5-thinking', 'claude-opus-4-5-20251101-thinking',
   'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001',
   'claude-opus-4-5-20251101',
+  'claude-opus-4-6-thinking',
   'claude-opus-4-6',
+  'claude-opus-4-7-thinking',
   'claude-opus-4-7',
-  'claude-sonnet-4-6'
+  'claude-sonnet-4-6-thinking',
+  'claude-sonnet-4-6',
+  'claude-2.1', 'claude-2.0', 'claude-instant-1.2'
 ]
 
 // Google Gemini

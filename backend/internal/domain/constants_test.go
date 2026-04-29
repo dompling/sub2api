@@ -57,6 +57,8 @@ func TestDefaultKiroModelMapping_MatchesKiroReferenceModels(t *testing.T) {
 		"claude-opus-4-5",
 		"claude-sonnet-4-5",
 		"claude-sonnet-4",
+		"claude-3-5-sonnet-20241022",
+		"claude-3-5-haiku-20241022",
 		"gpt-4o",
 		"gpt-4",
 		"deepseek-3-2",
