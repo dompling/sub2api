@@ -197,6 +197,35 @@ type eventStreamMessage struct {
 	Payload   []byte
 }
 
+type kiroSemanticEventType string
+
+const (
+	kiroSemanticContent     kiroSemanticEventType = "content"
+	kiroSemanticReasoning   kiroSemanticEventType = "reasoning"
+	kiroSemanticToolUse     kiroSemanticEventType = "tool_use"
+	kiroSemanticToolInput   kiroSemanticEventType = "tool_input"
+	kiroSemanticToolStop    kiroSemanticEventType = "tool_stop"
+	kiroSemanticUsage       kiroSemanticEventType = "usage"
+	kiroSemanticAssistantTU kiroSemanticEventType = "assistant_tool_use"
+)
+
+type kiroSemanticEvent struct {
+	Type                   kiroSemanticEventType
+	Content                string
+	Reasoning              string
+	ToolUseID              string
+	ToolName               string
+	ToolInput              string
+	ToolInputMap           map[string]any
+	ToolStop               bool
+	ToolUse                *KiroToolUse
+	SourceEventType        string
+	RawEvent               map[string]any
+	SourceStopReason       string
+	IsDuplicateContent     bool
+	ContextUsagePercentage float64
+}
+
 func MapModel(model string) string {
 	switch strings.TrimSpace(strings.ToLower(model)) {
 	case "claude-opus-4-7", "claude-opus-4-7-thinking", "claude-opus-4.7":
@@ -379,12 +408,14 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	streamingToolStopped := make(map[string]bool)
 	currentStreamingToolID := ""
 	pendingAssistantText := ""
+	lastContentFragment := ""
 	pendingLeadingWhitespace := ""
 	stopReason := ""
 	thinkingBuffer := ""
 	inThinkingBlock := false
 	stripThinkingLeadingNewline := false
 	sawNonThinkingBlock := false
+	var outputTextBuf strings.Builder
 
 	writeEvent := func(event string, data any) error {
 		payload, err := json.Marshal(data)
@@ -511,6 +542,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if toolUseID == "" || !streamingToolStarted[toolUseID] || streamingToolStopped[toolUseID] {
 			return nil
 		}
+		outputTextBuf.WriteString(fragment)
 		return writeEvent("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
 			"index": streamingToolBlockIndices[toolUseID],
@@ -520,38 +552,34 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			},
 		})
 	}
-	processStreamingToolUseEvent := func(event map[string]interface{}) error {
-		tu := nestedEvent(event, "toolUseEvent")
-		toolUseID := getString(tu, "toolUseId")
-		name := getString(tu, "name")
+	processStreamingToolInput := func(toolUseID, name, fragment string, inputMap map[string]any) error {
+		if toolUseID == "" {
+			return nil
+		}
 		if err := startStreamingToolUse(toolUseID, name); err != nil {
 			return err
 		}
-		if inputRaw, ok := tu["input"]; ok {
-			switch v := inputRaw.(type) {
-			case string:
-				if err := emitStreamingToolInput(toolUseID, name, v); err != nil {
-					return err
-				}
-			case map[string]interface{}:
-				encoded, err := json.Marshal(v)
-				if err != nil {
-					return err
-				}
-				if err := emitStreamingToolInput(toolUseID, name, string(encoded)); err != nil {
-					return err
-				}
+		if inputMap != nil {
+			encoded, err := json.Marshal(inputMap)
+			if err != nil {
+				return err
 			}
+			fragment = string(encoded)
 		}
-		isStop, _ := tu["stop"].(bool)
-		if isStop {
-			processedIDs[toolUseID] = true
-			if stopReason == "" {
-				stopReason = "tool_use"
-			}
-			return closeStreamingTool(toolUseID)
+		return emitStreamingToolInput(toolUseID, name, fragment)
+	}
+	processStreamingToolStop := func(toolUseID string) error {
+		if toolUseID == "" {
+			toolUseID = currentStreamingToolID
 		}
-		return nil
+		if toolUseID == "" {
+			return nil
+		}
+		processedIDs[toolUseID] = true
+		if stopReason == "" {
+			stopReason = "tool_use"
+		}
+		return closeStreamingTool(toolUseID)
 	}
 	emitTextDelta := func(text string, allowWhitespace bool) error {
 		if text == "" || (!allowWhitespace && strings.TrimSpace(text) == "") {
@@ -594,6 +622,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 				return err
 			}
 		}
+		outputTextBuf.WriteString(text)
 		return writeEvent("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
 			"index": contentBlockIndex,
@@ -634,6 +663,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			return err
 		}
 		inputJSON, _ := json.Marshal(tool.Input)
+		outputTextBuf.Write(inputJSON)
 		if err := writeEvent("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
 			"index": contentBlockIndex,
@@ -700,6 +730,9 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			if err := startThinkingBlock(); err != nil {
 				return err
 			}
+		}
+		if text != "" {
+			outputTextBuf.WriteString(text)
 		}
 		return writeEvent("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
@@ -823,6 +856,62 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		return flushThinkingAtBoundary()
 	}
 
+	applySemanticEvent := func(evt *kiroSemanticEvent) error {
+		if evt == nil {
+			return nil
+		}
+		if evt.SourceStopReason != "" {
+			stopReason = evt.SourceStopReason
+		}
+		switch evt.Type {
+		case kiroSemanticContent:
+			if evt.IsDuplicateContent || evt.Content == "" {
+				return nil
+			}
+			lastContentFragment = evt.Content
+			if requestCtx.ThinkingEnabled {
+				return processThinkingTaggedText(evt.Content)
+			}
+			pendingAssistantText += evt.Content
+			return flushPendingAssistantText()
+		case kiroSemanticReasoning:
+			if evt.Reasoning == "" || !requestCtx.ThinkingEnabled {
+				return nil
+			}
+			wrapped := thinkingStartTag + evt.Reasoning + thinkingEndTag + "\n\n"
+			return processThinkingTaggedText(wrapped)
+		case kiroSemanticAssistantTU:
+			if evt.ToolUse == nil || processedIDs[evt.ToolUse.ToolUseID] {
+				return nil
+			}
+			processedIDs[evt.ToolUse.ToolUseID] = true
+			if err := flushThinkingAtBoundary(); err != nil {
+				return err
+			}
+			return emitToolUse(*evt.ToolUse)
+		case kiroSemanticToolUse:
+			if err := flushThinkingAtBoundary(); err != nil {
+				return err
+			}
+			return processStreamingToolInput(evt.ToolUseID, evt.ToolName, evt.ToolInput, evt.ToolInputMap)
+		case kiroSemanticToolInput:
+			if err := flushThinkingAtBoundary(); err != nil {
+				return err
+			}
+			return processStreamingToolInput(evt.ToolUseID, evt.ToolName, evt.ToolInput, evt.ToolInputMap)
+		case kiroSemanticToolStop:
+			if err := flushThinkingAtBoundary(); err != nil {
+				return err
+			}
+			return processStreamingToolStop(evt.ToolUseID)
+		case kiroSemanticUsage:
+			updateUsageFromEvent(&usage, evt.SourceEventType, evt.RawEvent)
+			return nil
+		default:
+			return nil
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -846,70 +935,11 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			continue
 		}
 
-		if sr := readStopReason(event); sr != "" {
-			stopReason = sr
-		}
-
-		switch msg.EventType {
-		case "assistantResponseEvent":
-			assistant := nestedEvent(event, "assistantResponseEvent")
-			if sr := readStopReason(assistant); sr != "" {
-				stopReason = sr
-			}
-			text := getString(assistant, "content")
-			if text == "" {
-				text = getString(event, "content")
-			}
-			if text != "" {
-				if requestCtx.ThinkingEnabled {
-					if err := processThinkingTaggedText(text); err != nil {
-						return nil, err
-					}
-				} else {
-					pendingAssistantText += text
-					if err := flushPendingAssistantText(); err != nil {
-						return nil, err
-					}
-				}
-			}
-			for _, tool := range readToolUses(assistant, event) {
-				if processedIDs[tool.ToolUseID] {
-					continue
-				}
-				processedIDs[tool.ToolUseID] = true
-				if err := flushThinkingAtBoundary(); err != nil {
-					return nil, err
-				}
-				if err := emitToolUse(tool); err != nil {
-					return nil, err
-				}
-			}
-		case "reasoningContentEvent":
-			reasoning := nestedEvent(event, "reasoningContentEvent")
-			text := getString(reasoning, "text")
-			if text == "" {
-				text = getString(event, "text")
-			}
-			if text == "" {
-				continue
-			}
-			if requestCtx.ThinkingEnabled {
-				wrapped := thinkingStartTag + text + thinkingEndTag + "\n\n"
-				if err := processThinkingTaggedText(wrapped); err != nil {
-					return nil, err
-				}
-			}
-		case "toolUseEvent":
-			if err := flushThinkingAtBoundary(); err != nil {
+		semanticEvents := extractSemanticEvents(msg.EventType, event, &lastContentFragment)
+		for i := range semanticEvents {
+			if err := applySemanticEvent(&semanticEvents[i]); err != nil {
 				return nil, err
 			}
-			if err := processStreamingToolUseEvent(event); err != nil {
-				return nil, err
-			}
-		case "messageMetadataEvent", "metadataEvent", "supplementaryWebLinksEvent", "usageEvent", "messageStopEvent", "message_stop":
-			updateUsageFromEvent(&usage, msg.EventType, event)
-		default:
-			updateUsageFromEvent(&usage, msg.EventType, event)
 		}
 	}
 
@@ -934,6 +964,11 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	}
 	if err := closeThinking(); err != nil {
 		return nil, err
+	}
+	if usage.OutputTokens == 0 {
+		if est := estimateOutputTokens(outputTextBuf.String()); est > 0 {
+			usage.OutputTokens = est
+		}
 	}
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
@@ -1846,6 +1881,18 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 	toolUses = append(toolUses, embeddedToolUses...)
 	toolUses = deduplicateToolUses(toolUses)
 
+	if usage.OutputTokens == 0 {
+		var outputBuf strings.Builder
+		outputBuf.WriteString(cleanText)
+		for _, tu := range toolUses {
+			if b, err := json.Marshal(tu.Input); err == nil {
+				outputBuf.Write(b)
+			}
+		}
+		if est := estimateOutputTokens(outputBuf.String()); est > 0 {
+			usage.OutputTokens = est
+		}
+	}
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
@@ -2283,6 +2330,132 @@ func processToolUseEvent(event map[string]interface{}, currentTool *toolUseState
 	}
 	processedIDs[currentTool.ToolUseID] = true
 	return []KiroToolUse{finalizeRawToolUse(currentTool.ToolUseID, currentTool.Name, currentTool.InputBuffer.String())}, nil
+}
+
+func extractSemanticEvents(eventType string, event map[string]interface{}, lastContentFragment *string) []kiroSemanticEvent {
+	if event == nil {
+		return nil
+	}
+	var out []kiroSemanticEvent
+	sourceStopReason := readStopReason(event)
+
+	switch eventType {
+	case "assistantResponseEvent":
+		assistant := nestedEvent(event, "assistantResponseEvent")
+		if sr := readStopReason(assistant); sr != "" {
+			sourceStopReason = sr
+		}
+		if text := getString(assistant, "content"); text != "" {
+			dup := lastContentFragment != nil && *lastContentFragment == text
+			out = append(out, kiroSemanticEvent{
+				Type:               kiroSemanticContent,
+				Content:            text,
+				SourceStopReason:   sourceStopReason,
+				IsDuplicateContent: dup,
+			})
+		} else if text := getString(event, "content"); text != "" {
+			dup := lastContentFragment != nil && *lastContentFragment == text
+			out = append(out, kiroSemanticEvent{
+				Type:               kiroSemanticContent,
+				Content:            text,
+				SourceStopReason:   sourceStopReason,
+				IsDuplicateContent: dup,
+			})
+		}
+		for _, tool := range readToolUses(assistant, event) {
+			toolCopy := tool
+			out = append(out, kiroSemanticEvent{
+				Type:             kiroSemanticAssistantTU,
+				ToolUse:          &toolCopy,
+				SourceStopReason: sourceStopReason,
+			})
+		}
+	case "reasoningContentEvent":
+		reasoning := nestedEvent(event, "reasoningContentEvent")
+		text := getString(reasoning, "text")
+		if text == "" {
+			text = getString(event, "text")
+		}
+		if text != "" {
+			out = append(out, kiroSemanticEvent{
+				Type:             kiroSemanticReasoning,
+				Reasoning:        text,
+				SourceStopReason: sourceStopReason,
+			})
+		}
+	case "toolUseEvent":
+		tu := nestedEvent(event, "toolUseEvent")
+		toolUseID := getString(tu, "toolUseId")
+		name := getString(tu, "name")
+		isStop, _ := tu["stop"].(bool)
+		if inputRaw, ok := tu["input"]; ok {
+			switch v := inputRaw.(type) {
+			case string:
+				if toolUseID != "" && name != "" {
+					out = append(out, kiroSemanticEvent{
+						Type:             kiroSemanticToolUse,
+						ToolUseID:        toolUseID,
+						ToolName:         name,
+						ToolInput:        v,
+						ToolStop:         isStop,
+						SourceStopReason: sourceStopReason,
+					})
+				} else if toolUseID != "" {
+					out = append(out, kiroSemanticEvent{
+						Type:             kiroSemanticToolInput,
+						ToolUseID:        toolUseID,
+						ToolName:         name,
+						ToolInput:        v,
+						SourceStopReason: sourceStopReason,
+					})
+				}
+			case map[string]any:
+				if toolUseID != "" && name != "" {
+					out = append(out, kiroSemanticEvent{
+						Type:             kiroSemanticToolUse,
+						ToolUseID:        toolUseID,
+						ToolName:         name,
+						ToolInputMap:     v,
+						ToolStop:         isStop,
+						SourceStopReason: sourceStopReason,
+					})
+				} else if toolUseID != "" {
+					out = append(out, kiroSemanticEvent{
+						Type:             kiroSemanticToolInput,
+						ToolUseID:        toolUseID,
+						ToolName:         name,
+						ToolInputMap:     v,
+						SourceStopReason: sourceStopReason,
+					})
+				}
+			}
+		}
+		if isStop {
+			out = append(out, kiroSemanticEvent{
+				Type:             kiroSemanticToolStop,
+				ToolUseID:        toolUseID,
+				ToolName:         name,
+				ToolStop:         true,
+				SourceStopReason: sourceStopReason,
+			})
+		}
+	case "messageMetadataEvent", "metadataEvent", "supplementaryWebLinksEvent", "usageEvent", "messageStopEvent", "message_stop":
+		out = append(out, kiroSemanticEvent{
+			Type:             kiroSemanticUsage,
+			SourceEventType:  eventType,
+			RawEvent:         event,
+			SourceStopReason: sourceStopReason,
+		})
+	default:
+		out = append(out, kiroSemanticEvent{
+			Type:             kiroSemanticUsage,
+			SourceEventType:  eventType,
+			RawEvent:         event,
+			SourceStopReason: sourceStopReason,
+		})
+	}
+
+	return out
 }
 
 func repairJSON(input string) string {
@@ -2743,6 +2916,27 @@ func readStopReason(m map[string]interface{}) string {
 		return stop
 	}
 	return getString(m, "stopReason")
+}
+
+// estimateOutputTokens estimates token count from output text.
+// Chinese characters count as ~1.5 chars/token, others as ~4 chars/token.
+func estimateOutputTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	var chinese, other int
+	for _, r := range text {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			chinese++
+		} else {
+			other++
+		}
+	}
+	tokens := (chinese*2+2)/3 + (other+3)/4
+	if tokens == 0 {
+		return 1
+	}
+	return tokens
 }
 
 func toInt(value interface{}) (int, bool) {

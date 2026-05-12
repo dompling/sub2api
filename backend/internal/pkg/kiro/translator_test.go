@@ -1269,6 +1269,136 @@ func TestMapModel_ReturnsEmptyForUnsupportedModels(t *testing.T) {
 	}
 }
 
+func TestParseNonStreamingEventStreamEstimatesOutputTokensWhenMissing(t *testing.T) {
+	// Kiro sometimes omits outputTokens; output should be estimated from response text.
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{
+			"content": "hello world",
+		},
+	}))
+	_, _ = stream.Write(buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{
+		"messageMetadataEvent": map[string]any{
+			"tokenUsage": map[string]any{
+				"uncachedInputTokens": 10,
+				"totalTokens":         15,
+				// outputTokens intentionally absent
+			},
+		},
+	}))
+
+	result, err := ParseNonStreamingEventStream(stream, "claude-sonnet-4-5")
+	require.NoError(t, err)
+	require.Equal(t, 10, result.Usage.InputTokens)
+	require.Greater(t, result.Usage.OutputTokens, 0, "should estimate outputTokens from response text")
+}
+
+func TestStreamEventStreamAsAnthropicEstimatesOutputTokensWhenMissing(t *testing.T) {
+	// Kiro sometimes omits outputTokens; output should be estimated from streamed text.
+	pr, pw := io.Pipe()
+	var out bytes.Buffer
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, err := StreamEventStreamAsAnthropic(context.Background(), pr, &out, "claude-sonnet-4-5", 10)
+		errCh <- err
+	}()
+
+	_, _ = pw.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "hello world"},
+	}))
+	_, _ = pw.Write(buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{
+		"messageMetadataEvent": map[string]any{
+			"tokenUsage": map[string]any{
+				"uncachedInputTokens": 10,
+				"totalTokens":         16,
+				// outputTokens intentionally absent
+			},
+		},
+	}))
+	require.NoError(t, pw.Close())
+	require.NoError(t, <-errCh)
+
+	output := out.String()
+	// message_delta should have output_tokens > 0 (estimated from "hello world")
+	require.Contains(t, output, "event: message_delta", "message_delta should be present")
+	deltaIdx := strings.Index(output, "event: message_delta")
+	deltaSection := output[deltaIdx:]
+	require.NotContains(t, deltaSection, `"output_tokens":0`, "message_delta output_tokens should not be 0")
+	require.Contains(t, deltaSection, `"output_tokens":`, "output_tokens should be present in message_delta")
+}
+
+func TestStreamEventStreamAsAnthropicStreamingToolInputCountsOutputTokens(t *testing.T) {
+	// Streaming tool input fragments should be counted toward output_tokens estimation.
+	pr, pw := io.Pipe()
+	var out bytes.Buffer
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, err := StreamEventStreamAsAnthropic(context.Background(), pr, &out, "claude-sonnet-4-5", 10)
+		errCh <- err
+	}()
+
+	_, _ = pw.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
+		"toolUseEvent": map[string]any{
+			"toolUseId": "toolu_01",
+			"name":      "bash",
+			"input":     `{"command": "echo hello world"}`,
+			"stop":      true,
+		},
+	}))
+	// No outputTokens in metadata
+	_, _ = pw.Write(buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{
+		"messageMetadataEvent": map[string]any{
+			"tokenUsage": map[string]any{
+				"uncachedInputTokens": 10,
+			},
+		},
+	}))
+	require.NoError(t, pw.Close())
+	require.NoError(t, <-errCh)
+
+	output := out.String()
+	deltaIdx := strings.Index(output, "event: message_delta")
+	require.GreaterOrEqual(t, deltaIdx, 0, "message_delta should be present")
+	deltaSection := output[deltaIdx:]
+	require.NotContains(t, deltaSection, `"output_tokens":0`, "streaming tool input should contribute to output_tokens")
+	require.Contains(t, deltaSection, `"output_tokens":`, "output_tokens should be present in message_delta")
+}
+
+func TestStreamEventStreamAsAnthropicUpstreamOutputTokensNotOverridden(t *testing.T) {
+	// When upstream provides real outputTokens, estimation must not override it.
+	pr, pw := io.Pipe()
+	var out bytes.Buffer
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, err := StreamEventStreamAsAnthropic(context.Background(), pr, &out, "claude-sonnet-4-5", 10)
+		errCh <- err
+	}()
+
+	_, _ = pw.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "hi"},
+	}))
+	_, _ = pw.Write(buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{
+		"messageMetadataEvent": map[string]any{
+			"tokenUsage": map[string]any{
+				"uncachedInputTokens": 10,
+				"outputTokens":        42,
+				"totalTokens":         52,
+			},
+		},
+	}))
+	require.NoError(t, pw.Close())
+	require.NoError(t, <-errCh)
+
+	output := out.String()
+	deltaIdx := strings.Index(output, "event: message_delta")
+	require.GreaterOrEqual(t, deltaIdx, 0)
+	deltaSection := output[deltaIdx:]
+	require.Contains(t, deltaSection, `"output_tokens":42`, "upstream outputTokens should not be overridden by estimation")
+}
+
 func buildEventStreamFrame(t *testing.T, eventType string, payload any) []byte {
 	t.Helper()
 	payloadBytes, err := json.Marshal(payload)
