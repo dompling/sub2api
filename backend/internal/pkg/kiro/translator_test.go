@@ -668,6 +668,27 @@ func TestParseNonStreamingEventStreamThinkingOnlyResponse(t *testing.T) {
 	require.Equal(t, "", gjson.GetBytes(result.ResponseBody, "content.1.text").String())
 }
 
+func TestParseNonStreamingEventStreamMergesManyReasoningFragments(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	for _, frag := range []string{"I ", "need ", "to ", "think"} {
+		_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+			"reasoningContentEvent": map[string]any{"text": frag},
+		}))
+	}
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "answer"},
+	}))
+
+	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
+	require.NoError(t, err)
+	// 连续 reasoning 片段合并为单个 thinking 块，且内部不混入字面标签
+	require.Equal(t, "thinking", gjson.GetBytes(result.ResponseBody, "content.0.type").String())
+	require.Equal(t, "I need to think", gjson.GetBytes(result.ResponseBody, "content.0.thinking").String())
+	require.Equal(t, "text", gjson.GetBytes(result.ResponseBody, "content.1.type").String())
+	require.Equal(t, "answer", gjson.GetBytes(result.ResponseBody, "content.1.text").String())
+	require.False(t, gjson.GetBytes(result.ResponseBody, "content.2").Exists())
+}
+
 func TestStreamEventStreamAsAnthropicExtractsEmbeddedToolCall(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
 	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
@@ -1096,6 +1117,30 @@ func TestStreamEventStreamAsAnthropicParsesMultipleReasoningEventsWhenEnabled(t 
 	require.Contains(t, output, `"thinking":"first thought"`)
 	require.Contains(t, output, `"thinking":"second thought"`)
 	require.Contains(t, output, `"text":"final"`)
+	// 连续 reasoning 片段必须合并进同一个 thinking 块，而不是每片一个块
+	require.Equal(t, 1, strings.Count(output, `"type":"thinking"`), "consecutive reasoning events should produce exactly one thinking block")
+}
+
+func TestStreamEventStreamAsAnthropicMergesManyReasoningFragmentsIntoOneBlock(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	for _, frag := range []string{"I ", "need ", "to ", "think"} {
+		_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+			"reasoningContentEvent": map[string]any{"text": frag},
+		}))
+	}
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "answer"},
+	}))
+
+	var out bytes.Buffer
+	_, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{ThinkingEnabled: true})
+	require.NoError(t, err)
+
+	output := out.String()
+	require.Equal(t, 1, strings.Count(output, `"type":"thinking"`), "many reasoning fragments must collapse into a single thinking block")
+	// 每个片段各自一个 thinking_delta，但同属一个块
+	require.Equal(t, 4, strings.Count(output, `"type":"thinking_delta"`))
+	require.Contains(t, output, `"text":"answer"`)
 }
 
 func TestStreamEventStreamAsAnthropicParsesTaggedThinkingWhenEnabled(t *testing.T) {
@@ -1709,4 +1754,92 @@ func buildEventStreamFrame(t *testing.T, eventType string, payload any) []byte {
 	_, _ = frame.Write(payloadBytes)
 	require.NoError(t, binary.Write(frame, binary.BigEndian, uint32(0)))
 	return frame.Bytes()
+}
+
+func TestBuildKiroPayloadTrailingInlineSystemPreservesCurrentUserAndTools(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[
+			{"role":"user","content":"real question"},
+			{"role":"system","content":"SKILL LIST REMINDER"}
+		],
+		"tools":[
+			{"name":"read","description":"read a file","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}},
+			{"name":"grep","description":"search","input_schema":{"type":"object","properties":{"q":{"type":"string"}}}}
+		]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	payload := result.Payload
+
+	require.Equal(t, "real question", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.content").String())
+	require.Equal(t, int64(2), gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools.#").Int())
+	require.Contains(t, gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String(), "SKILL LIST REMINDER")
+}
+
+func TestBuildKiroPayloadMidConversationSystemMergesAndKeepsAlternation(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[
+			{"role":"user","content":"alpha"},
+			{"role":"system","content":"MID NOTE"},
+			{"role":"user","content":"bravo"}
+		]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	payload := result.Payload
+
+	// alpha 与 bravo 过滤 system 后相邻，应被合并为当前消息
+	current := gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.content").String()
+	require.Contains(t, current, "alpha")
+	require.Contains(t, current, "bravo")
+	// MID NOTE 折叠进前置注入
+	require.Contains(t, gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String(), "MID NOTE")
+	// history 中不应出现裸 system 角色
+	for _, msg := range gjson.GetBytes(payload, "conversationState.history").Array() {
+		require.NotEqual(t, "system", msg.Get("userInputMessage.role").String())
+	}
+}
+
+func TestBuildKiroPayloadInlineSystemBlockArrayExtracted(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[
+			{"role":"user","content":"hi"},
+			{"role":"system","content":[{"type":"text","text":"BLOCK NOTE"}]}
+		]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	payload := result.Payload
+
+	require.Equal(t, "hi", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.content").String())
+	require.Contains(t, gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String(), "BLOCK NOTE")
+}
+
+func TestBuildKiroPayloadTrailingAssistantThenSystemStillAttachesTools(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[
+			{"role":"user","content":"do something"},
+			{"role":"assistant","content":"done"},
+			{"role":"system","content":"TRAILING NOTE"}
+		],
+		"tools":[
+			{"name":"read","description":"read a file","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}
+		]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	payload := result.Payload
+
+	// 末尾过滤后变 assistant，走 Continue 兜底，但 tools 仍应挂载
+	require.Equal(t, "Continue", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.content").String())
+	require.Greater(t, gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools.#").Int(), int64(0))
+	require.Contains(t, gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String(), "TRAILING NOTE")
 }

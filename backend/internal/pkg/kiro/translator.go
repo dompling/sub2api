@@ -305,6 +305,7 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 	}
 
 	messages := gjson.GetBytes(claudeBody, "messages")
+	inlineSystem, filteredMessages := extractInlineSystemPrompts(messages)
 	thinking := deriveThinkingDirective(claudeBody, headers)
 	requestCtx.ThinkingEnabled = thinking != nil
 	// Opus 4.7/4.8 即便客户端未请求 thinking,上游仍会以 <thinking>...</thinking> 文本流出 CoT;
@@ -313,9 +314,17 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 		requestCtx.ThinkingEnabled = true
 	}
 	toolChoiceHint := extractClaudeToolChoiceHint(claudeBody, &requestCtx)
-	systemPrompt := buildInjectedSystemPrompt(extractSystemPrompt(claudeBody), thinking, toolChoiceHint)
+	baseSystem := extractSystemPrompt(claudeBody)
+	if inlineSystem != "" {
+		if strings.TrimSpace(baseSystem) != "" {
+			baseSystem = baseSystem + "\n\n" + inlineSystem
+		} else {
+			baseSystem = inlineSystem
+		}
+	}
+	systemPrompt := buildInjectedSystemPrompt(baseSystem, thinking, toolChoiceHint)
 
-	history, currentUserMsg, currentToolResults := processMessages(messages, modelID, normalizeOrigin(origin), &requestCtx)
+	history, currentUserMsg, currentToolResults := processMessages(filteredMessages, modelID, normalizeOrigin(origin), &requestCtx)
 	history = prependSystemHistory(history, systemPrompt, modelID, normalizeOrigin(origin))
 	var tools gjson.Result
 	if !isToolChoiceNone(claudeBody) {
@@ -888,8 +897,10 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			if evt.Reasoning == "" || !requestCtx.ThinkingEnabled {
 				return nil
 			}
-			wrapped := thinkingStartTag + evt.Reasoning + thinkingEndTag + "\n\n"
-			return processThinkingTaggedText(wrapped)
+			// 连续的 reasoningContentEvent 片段累积进同一个 thinking 块。
+			// 该块在遇到文本/工具/EOF 等边界时由 closeThinking 统一闭合；
+			// 不可对每个片段单独包 <thinking></thinking>，否则每片会各自开关一个块导致碎片化。
+			return emitThinkingDelta(evt.Reasoning)
 		case kiroSemanticAssistantTU:
 			if evt.ToolUse == nil || processedIDs[evt.ToolUse.ToolUseID] {
 				return nil
@@ -1023,10 +1034,14 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 }
 
 func extractSystemPrompt(claudeBody []byte) string {
-	systemField := gjson.GetBytes(claudeBody, "system")
-	if systemField.IsArray() {
+	return extractTextFromContentBlocks(gjson.GetBytes(claudeBody, "system"))
+}
+
+// extractTextFromContentBlocks 把 Claude 的 content 字段（字符串或 text block 数组）拼成纯文本。
+func extractTextFromContentBlocks(content gjson.Result) string {
+	if content.IsArray() {
 		var sb strings.Builder
-		for _, block := range systemField.Array() {
+		for _, block := range content.Array() {
 			if block.Get("type").String() == "text" {
 				_, _ = sb.WriteString(block.Get("text").String())
 			} else if block.Type == gjson.String {
@@ -1035,7 +1050,31 @@ func extractSystemPrompt(claudeBody []byte) string {
 		}
 		return sb.String()
 	}
-	return systemField.String()
+	return content.String()
+}
+
+// extractInlineSystemPrompts 从 messages 中提取所有 role=="system" 的中途消息文本，
+// 返回拼接后的 system 文本与剔除 system 后（顺序保留）的消息切片。
+// Claude 桌面版 beta mid-conversation-system-2026-04-07 会在 messages 中插入 system 消息，
+// Kiro/CodeWhisperer 不支持中途 system，故在此提取并折叠进顶层 systemPrompt。
+func extractInlineSystemPrompts(messages gjson.Result) (string, []gjson.Result) {
+	arr := messages.Array()
+	var sb strings.Builder
+	filtered := make([]gjson.Result, 0, len(arr))
+	for _, msg := range arr {
+		if msg.Get("role").String() == "system" {
+			text := strings.TrimSpace(extractTextFromContentBlocks(msg.Get("content")))
+			if text != "" {
+				if sb.Len() > 0 {
+					_, _ = sb.WriteString("\n\n")
+				}
+				_, _ = sb.WriteString(text)
+			}
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return sb.String(), filtered
 }
 
 func deriveThinkingDirective(body []byte, headers http.Header) *thinkingDirective {
@@ -1458,8 +1497,8 @@ func normalizeSchemaChild(key string, value any) any {
 	return value
 }
 
-func processMessages(messages gjson.Result, modelID, origin string, requestCtx *KiroRequestContext) ([]KiroHistoryMessage, *KiroUserInputMessage, []KiroToolResult) {
-	messagesArray := mergeAdjacentMessages(messages.Array())
+func processMessages(messages []gjson.Result, modelID, origin string, requestCtx *KiroRequestContext) ([]KiroHistoryMessage, *KiroUserInputMessage, []KiroToolResult) {
+	messagesArray := mergeAdjacentMessages(messages)
 
 	var history []KiroHistoryMessage
 	var currentUserMsg *KiroUserInputMessage
@@ -1903,6 +1942,14 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 	stopReason := ""
 	processedIDs := make(map[string]bool)
 	var currentTool *toolUseState
+	reasoningOpen := false
+	closeReasoning := func() {
+		if reasoningOpen {
+			_, _ = content.WriteString(thinkingEndTag)
+			_, _ = content.WriteString("\n\n")
+			reasoningOpen = false
+		}
+	}
 
 	for {
 		msg, err := readEventStreamMessage(reader)
@@ -1925,6 +1972,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 		}
 		switch msg.EventType {
 		case "assistantResponseEvent":
+			closeReasoning()
 			assistant := nestedEvent(event, "assistantResponseEvent")
 			if text := getString(assistant, "content"); text != "" {
 				_, _ = content.WriteString(text)
@@ -1942,6 +1990,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 				toolUses = append(toolUses, tool)
 			}
 		case "toolUseEvent":
+			closeReasoning()
 			completed, next := processToolUseEvent(event, currentTool, processedIDs)
 			currentTool = next
 			toolUses = append(toolUses, completed...)
@@ -1952,14 +2001,19 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 				text = getString(event, "text")
 			}
 			if text != "" {
-				_, _ = content.WriteString(thinkingStartTag)
+				// 连续 reasoning 片段累积进同一对 <thinking></thinking>，
+				// 仅在首片写开始标签，结束标签在边界（content/tool/EOF）由 closeReasoning 补上。
+				if !reasoningOpen {
+					_, _ = content.WriteString(thinkingStartTag)
+					reasoningOpen = true
+				}
 				_, _ = content.WriteString(text)
-				_, _ = content.WriteString(thinkingEndTag)
 			}
 		default:
 			updateUsageFromEvent(&usage, msg.EventType, event)
 		}
 	}
+	closeReasoning()
 
 	if currentTool != nil && currentTool.ToolUseID != "" && !processedIDs[currentTool.ToolUseID] {
 		completed, _ := processToolUseEvent(map[string]any{
