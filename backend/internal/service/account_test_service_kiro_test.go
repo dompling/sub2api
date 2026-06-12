@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestAccountTestService_KiroUsesKiroUpstreamInsteadOfAnthropic(t *testing.T) {
@@ -261,7 +262,7 @@ func TestBuildKiroPayloadForAccount_KiroBuilderIDWithoutProfileArnOmitsProfileAr
 	payloadBytes, err := json.Marshal(testPayload)
 	require.NoError(t, err)
 
-	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, payloadBytes, "claude-sonnet-4-6", "kiro-access-token", "claude-sonnet-4-6", nil)
+	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, nil, payloadBytes, "claude-sonnet-4-6", "kiro-access-token", "claude-sonnet-4-6", nil)
 	require.NoError(t, err)
 	kiroPayload := buildResult.Payload
 	require.NotContains(t, string(kiroPayload), `"profileArn":`)
@@ -287,7 +288,7 @@ func TestBuildKiroPayloadForAccount_KiroBuilderIDUsesCredentialProfileArn(t *tes
 	payloadBytes, err := json.Marshal(testPayload)
 	require.NoError(t, err)
 
-	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, payloadBytes, "claude-sonnet-4-6", "kiro-access-token", "claude-sonnet-4-6", nil)
+	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, nil, payloadBytes, "claude-sonnet-4-6", "kiro-access-token", "claude-sonnet-4-6", nil)
 	require.NoError(t, err)
 	kiroPayload := buildResult.Payload
 	require.Contains(t, string(kiroPayload), `"profileArn":"arn:aws:codewhisperer:us-east-1:123456789012:profile/CACHED"`)
@@ -313,8 +314,43 @@ func TestBuildKiroPayloadForAccount_KiroEnterpriseIDCOmitsMissingProfileArn(t *t
 	payloadBytes, err := json.Marshal(testPayload)
 	require.NoError(t, err)
 
-	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, payloadBytes, "claude-sonnet-4-6", "kiro-access-token", "claude-sonnet-4-6", nil)
+	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, nil, payloadBytes, "claude-sonnet-4-6", "kiro-access-token", "claude-sonnet-4-6", nil)
 	require.NoError(t, err)
 	kiroPayload := buildResult.Payload
 	require.NotContains(t, string(kiroPayload), `"profileArn":`)
+}
+
+func TestBuildKiroPayloadForAccount_StableConversationIDByDefault(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_CONVERSATION_ID_MODE", "")
+	account := &Account{
+		ID:       44,
+		Name:     "kiro-stable-conversation",
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"refresh_token": "stable-refresh",
+			"profile_arn":   "arn:aws:codewhisperer:us-east-1:123456789012:profile/STABLE",
+		},
+	}
+	body := []byte(`{"model":"claude-sonnet-4-5","system":"stable sys","messages":[{"role":"user","content":"hello"}]}`)
+	ref := NewRequestBodyRef(body)
+	parsed, err := ParseGatewayRequest(ref, "anthropic")
+	require.NoError(t, err)
+	parsed.Group = &Group{Platform: PlatformKiro}
+	parsed.SessionContext = &SessionContext{APIKeyID: 9}
+
+	first, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, parsed, body, "claude-sonnet-4.5", "kiro-access-token", "claude-sonnet-4.5", nil)
+	require.NoError(t, err)
+	second, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, parsed, body, "claude-sonnet-4.5", "rotated-token", "claude-sonnet-4.5", nil)
+	require.NoError(t, err)
+
+	firstID := gjson.GetBytes(first.Payload, "conversationState.conversationId").String()
+	secondID := gjson.GetBytes(second.Payload, "conversationState.conversationId").String()
+	require.NotEmpty(t, firstID)
+	require.Equal(t, firstID, secondID)
+
+	t.Setenv("SUB2API_KIRO_CONVERSATION_ID_MODE", "random")
+	randomized, err := (&GatewayService{}).buildKiroPayloadForAccount(context.Background(), account, parsed, body, "claude-sonnet-4.5", "kiro-access-token", "claude-sonnet-4.5", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, firstID, gjson.GetBytes(randomized.Payload, "conversationState.conversationId").String())
 }

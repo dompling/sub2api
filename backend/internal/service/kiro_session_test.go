@@ -10,21 +10,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestBuildKiroPayloadForAccountUsesStatelessConversationIDs(t *testing.T) {
+func TestBuildKiroPayloadForAccountUsesStableConversationIDs(t *testing.T) {
 	svc := &GatewayService{}
 	account := &Account{ID: 40, Credentials: map[string]any{"profile_arn": "profile-a"}}
 	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello","additional_kwargs":{"conversationId":"client-conv","continuationId":"client-cont"}}]}`)
 
-	first, err := svc.buildKiroPayloadForAccount(context.Background(), account, body, "claude-sonnet-4.5", "token", "claude-sonnet-4-5", nil)
+	first, err := svc.buildKiroPayloadForAccount(context.Background(), account, nil, body, "claude-sonnet-4.5", "token", "claude-sonnet-4-5", nil)
 	require.NoError(t, err)
-	second, err := svc.buildKiroPayloadForAccount(context.Background(), account, body, "claude-sonnet-4.5", "token", "claude-sonnet-4-5", nil)
+	second, err := svc.buildKiroPayloadForAccount(context.Background(), account, nil, body, "claude-sonnet-4.5", "token", "claude-sonnet-4-5", nil)
 	require.NoError(t, err)
 
 	firstConversationID := gjson.GetBytes(first.Payload, "conversationState.conversationId").String()
 	secondConversationID := gjson.GetBytes(second.Payload, "conversationState.conversationId").String()
 	require.NotEmpty(t, firstConversationID)
 	require.NotEmpty(t, secondConversationID)
-	require.NotEqual(t, firstConversationID, secondConversationID)
+	require.Equal(t, firstConversationID, secondConversationID)
 	require.NotEqual(t, "client-conv", firstConversationID)
 	require.False(t, gjson.GetBytes(first.Payload, "conversationState.agentContinuationId").Exists())
 	require.False(t, gjson.GetBytes(second.Payload, "conversationState.agentContinuationId").Exists())
@@ -43,7 +43,7 @@ func TestBuildKiroPayloadForAccountReplaysFullMessagesIntoHistory(t *testing.T) 
 		]
 	}`)
 
-	result, err := svc.buildKiroPayloadForAccount(context.Background(), account, body, "claude-sonnet-4.5", "token", "claude-sonnet-4-5", nil)
+	result, err := svc.buildKiroPayloadForAccount(context.Background(), account, nil, body, "claude-sonnet-4.5", "token", "claude-sonnet-4-5", nil)
 	require.NoError(t, err)
 
 	history := gjson.GetBytes(result.Payload, "conversationState.history").Array()

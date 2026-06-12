@@ -33,7 +33,10 @@ func thinkingSignature(content, model, messageID string) string {
 	if elem, ok := signatureCacheMap[cacheKey]; ok {
 		signatureLRU.MoveToFront(elem)
 		signatureCacheMu.Unlock()
-		return elem.Value.(*sigCacheEntry).value
+		if entry, ok := elem.Value.(*sigCacheEntry); ok && entry != nil {
+			return entry.value
+		}
+		return ""
 	}
 	signatureCacheMu.Unlock()
 
@@ -42,8 +45,9 @@ func thinkingSignature(content, model, messageID string) string {
 	signatureCacheMu.Lock()
 	for signatureLRU.Len() >= signatureCacheMaxSize {
 		if oldest := signatureLRU.Back(); oldest != nil {
-			entry := oldest.Value.(*sigCacheEntry)
-			delete(signatureCacheMap, entry.key)
+			if entry, ok := oldest.Value.(*sigCacheEntry); ok && entry != nil {
+				delete(signatureCacheMap, entry.key)
+			}
 			signatureLRU.Remove(oldest)
 		}
 	}
@@ -63,17 +67,17 @@ func generateClaudeSignature(thinkingContent, model, messageID string) string {
 
 	keyMaterial := deriveSignatureKey(model, messageID)
 	mac := hmac.New(sha256.New, keyMaterial)
-	mac.Write([]byte(thinkingContent))
+	_, _ = mac.Write([]byte(thinkingContent))
 	hmacResult := mac.Sum(nil)
 
 	fillerKey := hmac.New(sha256.New, keyMaterial)
-	fillerKey.Write([]byte("payload"))
-	fillerKey.Write([]byte(thinkingContent))
+	_, _ = fillerKey.Write([]byte("payload"))
+	_, _ = fillerKey.Write([]byte(thinkingContent))
 	filler := fillerKey.Sum(nil)
 	for len(filler) < 110 {
 		next := hmac.New(sha256.New, keyMaterial)
-		next.Write(filler)
-		next.Write([]byte{byte(len(filler))})
+		_, _ = next.Write(filler)
+		_, _ = next.Write([]byte{byte(len(filler))})
 		filler = append(filler, next.Sum(nil)...)
 	}
 	filler = filler[:110]
@@ -95,9 +99,9 @@ func generateClaudeSignature(thinkingContent, model, messageID string) string {
 
 func deriveSignatureKey(model, messageID string) []byte {
 	mac := hmac.New(sha256.New, []byte("anthropic-thinking-signature-v2"))
-	mac.Write([]byte(model))
-	mac.Write([]byte(":"))
-	mac.Write([]byte(messageID))
+	_, _ = mac.Write([]byte(model))
+	_, _ = mac.Write([]byte(":"))
+	_, _ = mac.Write([]byte(messageID))
 	return mac.Sum(nil)
 }
 
