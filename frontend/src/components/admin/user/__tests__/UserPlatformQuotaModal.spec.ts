@@ -209,13 +209,19 @@ describe('UserPlatformQuotaModal', () => {
     confirmSpy.mockRestore()
   })
 
-  it('全部清空按钮仅在 focus-visible 时显示焦点环', async () => {
+  it('全部清空按钮复用邮件模板恢复官方模板按钮的统一样式', async () => {
     const w = await mountAndOpen()
     const clearBtn = w.findAll('button').find((b) => b.text() === 'admin.users.platformQuota.clearAll')
     expect(clearBtn).toBeTruthy()
     const classes = clearBtn!.classes()
-    expect(classes).toContain('focus:ring-0')
-    expect(classes).toContain('focus-visible:ring-2')
+    expect(classes).toEqual(['btn', 'btn-secondary', 'btn-sm'])
+  })
+
+  it('全部清空按钮不放在横向滚动容器内，避免焦点边框被裁切', async () => {
+    const w = await mountAndOpen()
+    const clearBtn = w.findAll('button').find((b) => b.text() === 'admin.users.platformQuota.clearAll')
+    expect(clearBtn).toBeTruthy()
+    expect(clearBtn!.element.closest('.overflow-x-auto')).toBeNull()
   })
 
   describe('subscription warning banner', () => {
