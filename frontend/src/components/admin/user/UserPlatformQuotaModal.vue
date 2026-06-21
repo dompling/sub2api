@@ -3,6 +3,7 @@
     :show="show"
     :title="t('admin.users.platformQuota.title')"
     width="wide"
+    :close-on-escape="!confirmDialog.show"
     @close="$emit('close')"
   >
     <div v-if="user" class="space-y-4">
@@ -95,7 +96,11 @@
         </table>
         <p class="mt-3 text-xs text-gray-500">{{ t('admin.users.platformQuota.hint') }}</p>
         <div class="mt-3">
-          <button type="button" class="btn btn-secondary text-sm" @click="onClearAll">
+          <button
+            type="button"
+            class="btn btn-secondary text-sm focus:ring-0 focus-visible:ring-2 focus-visible:ring-primary-500/50 focus-visible:ring-offset-2"
+            @click="onClearAll"
+          >
             {{ t('admin.users.platformQuota.clearAll') }}
           </button>
         </div>
@@ -112,6 +117,16 @@
       </div>
     </template>
   </BaseDialog>
+
+  <ConfirmDialog
+    :show="confirmDialog.show"
+    :title="confirmDialog.title"
+    :message="confirmDialog.message"
+    :confirm-text="confirmDialog.confirmText"
+    :cancel-text="t('common.cancel')"
+    @confirm="confirmPendingAction"
+    @cancel="cancelPendingAction"
+  />
 </template>
 
 <script setup lang="ts">
@@ -121,6 +136,7 @@ import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { AdminUser, PlatformQuotaItem, PlatformQuotaPlatform, PlatformQuotaWindow } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close', 'success'])
@@ -148,6 +164,22 @@ const loading = ref(false)
 const submitting = ref(false)
 const resetting = reactive<Record<string, boolean>>({})
 const quotas = ref<QuotaRow[]>([])
+
+type PendingConfirmAction = () => void | Promise<void>
+
+const confirmDialog = reactive<{
+  show: boolean
+  title: string
+  message: string
+  confirmText: string
+  pending: PendingConfirmAction | null
+}>({
+  show: false,
+  title: '',
+  message: '',
+  confirmText: '',
+  pending: null,
+})
 
 function emptyRow(p: PlatformQuotaPlatform): QuotaRow {
   return {
@@ -184,6 +216,26 @@ function formatUsage(n: number): string {
   return n.toFixed(2)
 }
 
+function openConfirmDialog(message: string, pending: PendingConfirmAction) {
+  confirmDialog.title = t('admin.users.platformQuota.title')
+  confirmDialog.message = message
+  confirmDialog.confirmText = t('common.confirm')
+  confirmDialog.pending = pending
+  confirmDialog.show = true
+}
+
+async function confirmPendingAction() {
+  const pending = confirmDialog.pending
+  confirmDialog.show = false
+  confirmDialog.pending = null
+  if (pending) await pending()
+}
+
+function cancelPendingAction() {
+  confirmDialog.show = false
+  confirmDialog.pending = null
+}
+
 async function load() {
   if (!props.user) return
   loading.value = true
@@ -206,8 +258,10 @@ watch(
 function onClearAll() {
   // 二次确认：一键清空全部平台的 daily/weekly/monthly 限额属于高风险批量操作，
   // 误点后所有平台变为"无限额"，且本地无 undo 机制（需要逐个手动重填或取消保存）。
-  const confirmed = window.confirm(t('admin.users.platformQuota.clearAllConfirm'))
-  if (!confirmed) return
+  openConfirmDialog(t('admin.users.platformQuota.clearAllConfirm'), clearAllLimits)
+}
+
+function clearAllLimits() {
   for (const row of quotas.value) {
     row.daily_limit_usd = null
     row.weekly_limit_usd = null
@@ -264,10 +318,14 @@ function normalizeLimit(v: number | null | undefined): number | null {
 async function onReset(platform: PlatformQuotaPlatform, quotaWindow: PlatformQuotaWindow) {
   if (!props.user) return
   const windowLabel = t(`admin.users.platformQuota.window${quotaWindow.charAt(0).toUpperCase() + quotaWindow.slice(1)}`)
-  const confirmed = window.confirm(
-    t('admin.users.platformQuota.reset.confirm', { platform, window: windowLabel })
+  openConfirmDialog(
+    t('admin.users.platformQuota.reset.confirm', { platform, window: windowLabel }),
+    () => resetWindow(platform, quotaWindow, windowLabel)
   )
-  if (!confirmed) return
+}
+
+async function resetWindow(platform: PlatformQuotaPlatform, quotaWindow: PlatformQuotaWindow, windowLabel: string) {
+  if (!props.user) return
   const key = `${platform}.${quotaWindow}`
   resetting[key] = true
   try {

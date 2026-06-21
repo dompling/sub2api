@@ -208,6 +208,16 @@
         </div>
       </template>
     </div>
+
+    <ConfirmDialog
+      :show="showRestoreConfirm"
+      :title="t('admin.settings.emailTemplates.restoreOfficial')"
+      :message="t('admin.settings.emailTemplates.restoreConfirm')"
+      :confirm-text="t('common.confirm')"
+      :cancel-text="t('common.cancel')"
+      @confirm="confirmRestoreOfficial"
+      @cancel="showRestoreConfirm = false"
+    />
   </div>
 </template>
 
@@ -222,6 +232,7 @@ import type {
 import { useAppStore } from "@/stores";
 import { extractApiErrorMessage } from "@/utils/apiError";
 import Select from "@/components/common/Select.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 
 const { t, locale } = useI18n();
 const appStore = useAppStore();
@@ -288,6 +299,7 @@ const placeholders = ref<string[]>([]);
 const previewSubject = ref("");
 const previewHtml = ref("");
 const initializingSelection = ref(false);
+const showRestoreConfirm = ref(false);
 
 interface EventDisplayMeta {
   label: string;
@@ -656,8 +668,12 @@ async function refreshPreview() {
 
 async function restoreOfficial() {
   if (!selectedEvent.value || !selectedLocale.value) return;
-  if (!window.confirm(t("admin.settings.emailTemplates.restoreConfirm"))) return;
+  showRestoreConfirm.value = true;
+}
 
+async function confirmRestoreOfficial() {
+  if (!selectedEvent.value || !selectedLocale.value) return;
+  showRestoreConfirm.value = false;
   restoring.value = true;
   try {
     const template = await adminAPI.settings.restoreOfficialEmailTemplate(
