@@ -13,6 +13,20 @@ vi.mock('vue-i18n', async () => {
 })
 
 describe('PlatformTypeBadge', () => {
+  it('uses Kiro theme instead of Anthropic orange theme', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'kiro',
+        type: 'oauth',
+        planType: 'KIRO FREE'
+      }
+    })
+
+    expect(wrapper.html()).toContain('bg-violet-100')
+    expect(wrapper.html()).toContain('text-violet-700')
+    expect(wrapper.html()).not.toContain('bg-orange-100')
+  })
+
   it('shows Kiro overages tag next to the plan tag when enabled', () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {

@@ -13,7 +13,7 @@ const BADGE: Record<Platform, string> = {
   openai: 'bg-green-500/10 text-green-600 border-green-500/30 dark:text-green-400',
   antigravity: 'bg-purple-500/10 text-purple-600 border-purple-500/30 dark:text-purple-400',
   gemini: 'bg-blue-500/10 text-blue-600 border-blue-500/30 dark:text-blue-400',
-  kiro: 'bg-orange-500/10 text-orange-600 border-orange-500/30 dark:text-orange-400',
+  kiro: 'bg-violet-500/10 text-violet-600 border-violet-500/30 dark:text-violet-300',
 }
 const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-600 border-slate-500/30 dark:text-slate-400'
 
@@ -23,7 +23,7 @@ const BADGE_LIGHT: Record<Platform, string> = {
   openai: 'bg-green-500/10 text-green-600 dark:bg-green-500/10 dark:text-green-300',
   antigravity: 'bg-purple-500/10 text-purple-600 dark:bg-purple-500/10 dark:text-purple-300',
   gemini: 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
-  kiro: 'bg-orange-500/10 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
+  kiro: 'bg-violet-500/10 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
 }
 
 // ── Border ──────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ const BORDER: Record<Platform, string> = {
   openai: 'border-green-500/20 dark:border-green-500/20',
   antigravity: 'border-purple-500/20 dark:border-purple-500/20',
   gemini: 'border-blue-500/20 dark:border-blue-500/20',
-  kiro: 'border-orange-500/20 dark:border-orange-500/20',
+  kiro: 'border-violet-500/20 dark:border-violet-500/20',
 }
 const BORDER_DEFAULT = 'border-gray-200 dark:border-dark-700'
 
@@ -42,7 +42,7 @@ const ACCENT_BAR: Record<Platform, string> = {
   openai: 'bg-gradient-to-r from-emerald-400 to-emerald-500',
   antigravity: 'bg-gradient-to-r from-purple-400 to-purple-500',
   gemini: 'bg-gradient-to-r from-blue-400 to-blue-500',
-  kiro: 'bg-gradient-to-r from-orange-400 to-orange-500',
+  kiro: 'bg-gradient-to-r from-violet-500 to-fuchsia-500',
 }
 const ACCENT_BAR_DEFAULT = 'bg-gradient-to-r from-primary-400 to-primary-500'
 
@@ -52,7 +52,7 @@ const TEXT: Record<Platform, string> = {
   openai: 'text-emerald-600 dark:text-emerald-400',
   antigravity: 'text-purple-600 dark:text-purple-400',
   gemini: 'text-blue-600 dark:text-blue-400',
-  kiro: 'text-orange-600 dark:text-orange-400',
+  kiro: 'text-violet-600 dark:text-violet-300',
 }
 const TEXT_DEFAULT = 'text-primary-600 dark:text-primary-400'
 
@@ -62,7 +62,7 @@ const ICON: Record<Platform, string> = {
   openai: 'text-emerald-500 dark:text-emerald-400',
   antigravity: 'text-purple-500 dark:text-purple-400',
   gemini: 'text-blue-500 dark:text-blue-400',
-  kiro: 'text-orange-500 dark:text-orange-400',
+  kiro: 'text-violet-500 dark:text-violet-300',
 }
 const ICON_DEFAULT = 'text-primary-500 dark:text-primary-400'
 
@@ -72,7 +72,7 @@ const BUTTON: Record<Platform, string> = {
   openai: 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800 dark:bg-green-600/80 dark:hover:bg-green-600',
   antigravity: 'bg-purple-500 text-white hover:bg-purple-600 active:bg-purple-700 dark:bg-purple-500/80 dark:hover:bg-purple-500',
   gemini: 'bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700 dark:bg-blue-500/80 dark:hover:bg-blue-500',
-  kiro: 'bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 dark:bg-orange-500/80 dark:hover:bg-orange-500',
+  kiro: 'bg-violet-600 text-white hover:bg-violet-700 active:bg-violet-800 dark:bg-violet-500/80 dark:hover:bg-violet-500',
 }
 const BUTTON_DEFAULT = 'bg-primary-500 text-white hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-500'
 
@@ -82,7 +82,7 @@ const DISCOUNT: Record<Platform, string> = {
   openai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
   antigravity: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
   gemini: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-  kiro: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+  kiro: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',
 }
 const DISCOUNT_DEFAULT = 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
 
@@ -92,7 +92,7 @@ const GRADIENT: Record<Platform, string> = {
   openai: 'from-emerald-500 to-emerald-600',
   antigravity: 'from-purple-500 to-purple-600',
   gemini: 'from-blue-500 to-blue-600',
-  kiro: 'from-orange-500 to-orange-600',
+  kiro: 'from-violet-500 to-fuchsia-500',
 }
 const GRADIENT_DEFAULT = 'from-primary-500 to-primary-600'
 
@@ -102,7 +102,7 @@ const GRADIENT_TEXT: Record<Platform, string> = {
   openai: 'text-emerald-100',
   antigravity: 'text-purple-100',
   gemini: 'text-blue-100',
-  kiro: 'text-orange-100',
+  kiro: 'text-violet-100',
 }
 const GRADIENT_TEXT_DEFAULT = 'text-primary-100'
 
@@ -111,7 +111,7 @@ const GRADIENT_SUBTEXT: Record<Platform, string> = {
   openai: 'text-emerald-200',
   antigravity: 'text-purple-200',
   gemini: 'text-blue-200',
-  kiro: 'text-orange-200',
+  kiro: 'text-violet-100',
 }
 const GRADIENT_SUBTEXT_DEFAULT = 'text-primary-200'
 

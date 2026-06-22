@@ -277,6 +277,34 @@
       </transition>
     </teleport>
     <ConfirmDialog :show="showRestoreDialog" :title="t('admin.backup.actions.restore')" :message="t('admin.backup.actions.restoreConfirm')" :confirm-text="t('common.confirm')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmRestore" @cancel="showRestoreDialog = false" />
+    <BaseDialog :show="showRestorePasswordDialog" :title="t('admin.backup.actions.restore')" width="narrow" @close="cancelRestorePassword">
+      <form id="restore-backup-password-form" class="space-y-4" @submit.prevent="submitRestorePassword">
+        <Input
+          v-model="restorePassword"
+          type="password"
+          :label="t('admin.backup.actions.restorePasswordPrompt')"
+          :placeholder="t('admin.backup.actions.restorePasswordPrompt')"
+          autocomplete="current-password"
+          required
+        />
+      </form>
+
+      <template #footer>
+        <div class="flex justify-end space-x-3">
+          <button type="button" class="btn btn-secondary" @click="cancelRestorePassword">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger"
+            :disabled="!restorePassword.trim() || Boolean(restoringId)"
+            @click="submitRestorePassword"
+          >
+            {{ restoringId ? t('common.loading') : t('common.confirm') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
     <ConfirmDialog :show="showRemoveDialog" :title="t('admin.backup.actions.delete')" :message="t('admin.backup.actions.deleteConfirm')" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmRemove" @cancel="showRemoveDialog = false" />
 </template>
 
@@ -285,7 +313,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api'
 import { useAppStore } from '@/stores'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import Input from '@/components/common/Input.vue'
 import type { BackupS3Config, BackupScheduleConfig, BackupRecord } from '@/api/admin/backup'
 
 const { t } = useI18n()
@@ -320,7 +350,9 @@ const loadingBackups = ref(false)
 const creatingBackup = ref(false)
 const restoringId = ref('')
 const showRestoreDialog = ref(false)
+const showRestorePasswordDialog = ref(false)
 const pendingRestoreId = ref('')
+const restorePassword = ref('')
 const showRemoveDialog = ref(false)
 const pendingRemoveId = ref('')
 const manualExpireDays = ref(14)
@@ -559,9 +591,23 @@ function restoreBackup(id: string) {
 }
 async function confirmRestore() {
   showRestoreDialog.value = false
+  restorePassword.value = ''
+  showRestorePasswordDialog.value = true
+}
+
+function cancelRestorePassword() {
+  showRestorePasswordDialog.value = false
+  restorePassword.value = ''
+  pendingRestoreId.value = ''
+}
+
+async function submitRestorePassword() {
   const id = pendingRestoreId.value
-  const password = window.prompt(t('admin.backup.actions.restorePasswordPrompt'))
-  if (!password) return
+  const password = restorePassword.value
+  if (!id || !password.trim()) return
+  showRestorePasswordDialog.value = false
+  restorePassword.value = ''
+  pendingRestoreId.value = ''
   restoringId.value = id
   try {
     const record = await adminAPI.backup.restoreBackup(id, password)
