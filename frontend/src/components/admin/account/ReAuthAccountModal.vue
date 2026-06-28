@@ -19,6 +19,10 @@
                     ? 'from-amber-500 to-amber-600'
                     : isAntigravity
                       ? 'from-purple-500 to-purple-600'
+                  : isAntigravity
+                    ? 'from-purple-500 to-purple-600'
+                    : isGrok
+                      ? 'from-slate-600 to-cyan-600'
                       : 'from-orange-500 to-orange-600'
             ]"
           >
@@ -36,6 +40,10 @@
                       ? t('admin.accounts.kiroAccount')
                       : isAntigravity
                         ? t('admin.accounts.antigravityAccount')
+                    : isAntigravity
+                      ? t('admin.accounts.antigravityAccount')
+                      : isGrok
+                        ? t('admin.accounts.grokAccount')
                         : t('admin.accounts.claudeCodeAccount')
               }}
             </span>
@@ -374,6 +382,7 @@ import { useKiroOAuth } from '@/composables/useKiroOAuth'
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useAppStore } from '@/stores/app'
 import type { Account, AccountPlatform } from '@/types'
+import { useGrokOAuth } from '@/composables/useGrokOAuth'
 
 interface OAuthFlowExposed {
   authCode: string
@@ -405,6 +414,7 @@ const openaiOAuth = useOpenAIOAuth()
 const geminiOAuth = useGeminiOAuth()
 const antigravityOAuth = useAntigravityOAuth()
 const kiroOAuth = useKiroOAuth()
+const grokOAuth = useGrokOAuth()
 
 const oauthFlowRef = ref<OAuthFlowExposed | null>(null)
 
@@ -431,12 +441,14 @@ const oauthPlatform = computed<AccountPlatform>(() => {
   if (isAntigravity.value) return 'antigravity'
   return 'anthropic'
 })
+const isGrok = computed(() => props.account?.platform === 'grok')
 
 const currentAuthUrl = computed(() => {
   if (isOpenAILike.value) return openaiOAuth.authUrl.value
   if (isGemini.value) return geminiOAuth.authUrl.value
   if (isKiro.value) return kiroOAuth.authUrl.value
   if (isAntigravity.value) return antigravityOAuth.authUrl.value
+  if (isGrok.value) return grokOAuth.authUrl.value
   return claudeOAuth.authUrl.value
 })
 
@@ -445,6 +457,7 @@ const currentSessionId = computed(() => {
   if (isGemini.value) return geminiOAuth.sessionId.value
   if (isKiro.value) return kiroOAuth.sessionId.value
   if (isAntigravity.value) return antigravityOAuth.sessionId.value
+  if (isGrok.value) return grokOAuth.sessionId.value
   return claudeOAuth.sessionId.value
 })
 
@@ -453,6 +466,7 @@ const currentLoading = computed(() => {
   if (isGemini.value) return geminiOAuth.loading.value
   if (isKiro.value) return kiroOAuth.loading.value
   if (isAntigravity.value) return antigravityOAuth.loading.value
+  if (isGrok.value) return grokOAuth.loading.value
   return claudeOAuth.loading.value
 })
 
@@ -461,6 +475,7 @@ const currentError = computed(() => {
   if (isGemini.value) return geminiOAuth.error.value
   if (isKiro.value) return kiroOAuth.error.value
   if (isAntigravity.value) return antigravityOAuth.error.value
+  if (isGrok.value) return grokOAuth.error.value
   return claudeOAuth.error.value
 })
 
@@ -468,6 +483,8 @@ const isKiroImportMode = computed(() => isKiro.value && kiroAccountType.value ==
 
 const isManualInputMethod = computed(() => {
   return isOpenAILike.value || isGemini.value || isKiro.value || isAntigravity.value || oauthFlowRef.value?.inputMethod === 'manual'
+  // OpenAI/Gemini/Antigravity always use manual input (no cookie auth option)
+  return isOpenAILike.value || isGemini.value || isAntigravity.value || isGrok.value || oauthFlowRef.value?.inputMethod === 'manual'
 })
 
 const canExchangeCode = computed(() => {
@@ -526,6 +543,7 @@ const resetState = () => {
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   kiroOAuth.resetState()
+  grokOAuth.resetState()
   oauthFlowRef.value?.reset()
 }
 
@@ -611,6 +629,11 @@ const handleGenerateUrl = async () => {
 
   if (isAntigravity.value) {
     await antigravityOAuth.generateAuthUrl(props.account.proxy_id)
+    return
+  }
+
+  if (isGrok.value) {
+    await grokOAuth.generateAuthUrl(props.account.proxy_id)
     return
   }
 
@@ -736,7 +759,43 @@ const handleExchangeCode = async () => {
     }
     return
   }
+  if (isGrok.value) {
+    const sessionId = grokOAuth.sessionId.value
+    if (!sessionId) return
 
+    const stateFromInput = oauthFlowRef.value?.oauthState || ''
+    const stateToUse = stateFromInput || grokOAuth.state.value
+    if (!stateToUse) return
+
+    const tokenInfo = await grokOAuth.exchangeAuthCode({
+      code: authCode.trim(),
+      sessionId,
+      state: stateToUse,
+      proxyId: props.account.proxy_id
+    })
+    if (!tokenInfo) return
+
+    const credentials = grokOAuth.buildCredentials(tokenInfo)
+    const extra = grokOAuth.buildExtraInfo(tokenInfo)
+
+    try {
+      const updatedAccount = await adminAPI.accounts.applyOAuthCredentials(props.account.id, {
+        type: 'oauth',
+        credentials,
+        extra
+      })
+
+      appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+      emit('reauthorized', updatedAccount)
+      handleClose()
+    } catch (error: any) {
+      grokOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
+      appStore.showError(grokOAuth.error.value)
+    }
+    return
+  }
+
+  // Claude OAuth flow
   const sessionId = claudeOAuth.sessionId.value
   if (!sessionId) return
 
