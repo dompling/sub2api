@@ -506,8 +506,8 @@
       </div>
     </template>
 
-    <!-- Kiro platform: show credits + bonus + overage summary -->
-    <template v-else-if="account.platform === 'kiro' && account.type === 'oauth'">
+    <!-- Kiro platform: show credits + bonus + overage summary (仅直连 AWS;外部中转账号不展示 credits) -->
+    <template v-else-if="isKiroUsageAccount">
       <div v-if="loading" class="space-y-1.5">
         <div class="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
         <div class="space-y-1">
@@ -676,6 +676,7 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { isKiroDirectApiKeyAccount } from '@/utils/kiroAccount'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber, formatRelativeTime } from '@/utils/format'
 import UsageProgressBar from './UsageProgressBar.vue'
@@ -733,6 +734,10 @@ let visibilityObserver: IntersectionObserver | null = null
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
+  // Kiro 直连 AWS(OAuth 或 无 base_url 的 API Key)展示 credits;外部中转账号按通用 API Key 处理。
+  if (props.account.platform === 'kiro') {
+    return props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account)
+  }
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
 
@@ -741,7 +746,8 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
   if (props.account.platform === 'kiro') {
-    return props.account.type === 'oauth'
+    // 仅 Kiro 直连 AWS 账号查 getUsageLimits;外部中转账号不查 Kiro 用量
+    return props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account)
   }
   if (props.account.platform === 'gemini') {
     return true
@@ -1267,19 +1273,22 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
   return props.account.platform === 'anthropic' && (props.account.type === 'oauth' || props.account.type === 'setup-token')
 })
 
-const isKiroOAuth = computed(() => {
-  return props.account.platform === 'kiro' && props.account.type === 'oauth'
+// Kiro 用量账号:仅直连 AWS(OAuth 或 无 base_url 的 API Key)才查/展示 Kiro credits。
+// 外部中转账号(apikey + base_url)转发到 Anthropic 兼容上游,无 Kiro 用量,按通用 API Key 处理。
+const isKiroUsageAccount = computed(() => {
+  return props.account.platform === 'kiro' &&
+    (props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account))
 })
 
 const defaultUsageSource = computed<'passive' | 'active' | undefined>(() => {
-  if (isAnthropicOAuthOrSetupToken.value || isKiroOAuth.value) {
+  if (isAnthropicOAuthOrSetupToken.value || isKiroUsageAccount.value) {
     return 'passive'
   }
   return undefined
 })
 
 const manualRefreshUsageSource = computed<'passive' | 'active' | undefined>(() => {
-  if (isKiroOAuth.value) {
+  if (isKiroUsageAccount.value) {
     return 'active'
   }
   return defaultUsageSource.value
@@ -1296,7 +1305,7 @@ const kiroUsageAvailable = computed(() => {
 })
 
 const syncKiroUsageMeta = (info?: AccountUsageInfo | null) => {
-  if (!isKiroOAuth.value) return
+  if (!isKiroUsageAccount.value) return
 
   const planType = (
     info?.kiro_subscription_name ||
@@ -1366,7 +1375,7 @@ const kiroQuotaResetDisplay = computed(() => {
 })
 
 const isKiroProfileError = computed(() => {
-  if (!isKiroOAuth.value) return false
+  if (!isKiroUsageAccount.value) return false
   const err = (usageInfo.value?.error || '').toLowerCase()
   return err.includes('profilearn is required') ||
     (err.includes('profile arn') && err.includes('required')) ||
@@ -1375,7 +1384,7 @@ const isKiroProfileError = computed(() => {
 })
 
 const isKiroUsageForbidden = computed(() => {
-  if (!isKiroOAuth.value) return false
+  if (!isKiroUsageAccount.value) return false
   return usageInfo.value?.error_code === 'forbidden' && !usageInfo.value?.needs_reauth && !isKiroProfileError.value
 })
 
