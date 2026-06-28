@@ -70,12 +70,12 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <div class="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-5" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'anthropic'
                 ? 'bg-white text-orange-600 shadow-sm dark:bg-dark-600 dark:text-orange-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -88,7 +88,7 @@
             type="button"
             @click="form.platform = 'openai'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'openai'
                 ? 'bg-white text-green-600 shadow-sm dark:bg-dark-600 dark:text-green-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -113,7 +113,7 @@
             type="button"
             @click="form.platform = 'gemini'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'gemini'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-dark-600 dark:text-blue-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -138,7 +138,7 @@
             type="button"
             @click="form.platform = 'antigravity'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'antigravity'
                 ? 'bg-white text-purple-600 shadow-sm dark:bg-dark-600 dark:text-purple-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -151,13 +151,13 @@
             type="button"
             @click="form.platform = 'kiro'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'kiro'
                 ? 'bg-white text-amber-700 shadow-sm dark:bg-dark-600 dark:text-amber-300'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
             ]"
           >
-            <Icon name="sparkles" size="sm" />
+            <Icon name="terminal" size="sm" />
             Kiro
           </button>
         </div>
@@ -780,7 +780,7 @@
       <!-- Kiro account type selection -->
       <div v-if="form.platform === 'kiro'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3">
+        <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'"
@@ -825,10 +825,30 @@
               </span>
             </div>
           </button>
+          <button
+            type="button"
+            @click="accountCategory = 'apikey-relay'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'apikey-relay'
+                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
+            ]"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', accountCategory === 'apikey-relay' ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                API Key + Base URL
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.kiroApikeyRelay') }}
+              </span>
+            </div>
+          </button>
         </div>
       </div>
-
-      <!-- Kiro OAuth auth mode selection -->
       <div v-if="form.platform === 'kiro' && accountCategory === 'oauth-based'">
         <label class="input-label">{{ t('admin.accounts.oauth.kiro.authModeTitle') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -989,7 +1009,7 @@
         </div>
       </div>
 
-      <div v-if="form.platform === 'kiro' && accountCategory === 'oauth-based'" class="space-y-2">
+      <div v-if="form.platform === 'kiro' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')" class="space-y-2">
         <label class="input-label">{{ t('admin.accounts.kiroCreditUnitPriceUsd') }}</label>
         <input
           v-model.number="kiroCreditUnitPriceUsd"
@@ -1005,15 +1025,30 @@
 
       <div v-if="form.platform === 'kiro' && accountCategory === 'apikey'" class="space-y-4">
         <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <input
+            v-model="apiKeyValue"
+            type="password"
+            required
+            class="input font-mono"
+            placeholder="ksk_..."
+          />
+          <p class="input-hint">{{ apiKeyHint }}</p>
+        </div>
+      </div>
+
+      <!-- Kiro 外部中转(API Key + Base URL):转发到 Anthropic 兼容上游,作为分组兜底 -->
+      <div v-if="form.platform === 'kiro' && accountCategory === 'apikey-relay'" class="space-y-4">
+        <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="apiKeyBaseUrl"
             type="text"
             required
             class="input"
-            placeholder="https://your-kiro-upstream.example.com"
+            placeholder="https://your-relay.example.com"
           />
-          <p class="input-hint">{{ baseUrlHint }}</p>
+          <p class="input-hint">{{ t('admin.accounts.kiro.relayBaseUrlHint') }}</p>
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
@@ -1024,7 +1059,13 @@
             class="input font-mono"
             placeholder="sk-..."
           />
-          <p class="input-hint">{{ apiKeyHint }}</p>
+          <p class="input-hint">{{ t('admin.accounts.kiro.relayApiKeyHint') }}</p>
+        </div>
+        <div class="rounded-lg bg-sky-50 p-3 dark:bg-sky-900/20">
+          <p class="text-xs text-sky-700 dark:text-sky-400">
+            <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
+            {{ t('admin.accounts.kiro.relayPriorityHint') }}
+          </p>
         </div>
       </div>
 
@@ -3860,7 +3901,11 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'apikey-relay' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+
+// Kiro 优先级默认值:普通账号 1(高优先级);外部中转账号 100(低优先级,仅作兜底)。
+const KIRO_DEFAULT_PRIORITY = 1
+const KIRO_RELAY_DEFAULT_PRIORITY = 100
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
@@ -4447,6 +4492,15 @@ watch(
     if (platform !== 'anthropic' || category !== 'apikey') {
       anthropicPassthroughEnabled.value = false
       webSearchEmulationMode.value = 'default'
+    }
+    // Kiro 外部中转默认低优先级(数字更大),仅作兜底;切走时恢复默认。
+    // 仅在用户未手改过优先级时调整,避免覆盖用户输入。
+    if (platform === 'kiro') {
+      if (category === 'apikey-relay' && form.priority === KIRO_DEFAULT_PRIORITY) {
+        form.priority = KIRO_RELAY_DEFAULT_PRIORITY
+      } else if (category !== 'apikey-relay' && form.priority === KIRO_RELAY_DEFAULT_PRIORITY) {
+        form.priority = KIRO_DEFAULT_PRIORITY
+      }
     }
   }
 )
@@ -5242,6 +5296,42 @@ const handleSubmit = async () => {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
+    if (!apiKeyValue.value.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
+      return
+    }
+
+    // Kiro API Key 账号直连 AWS(q.{region}.amazonaws.com),不使用 base_url。
+    // 区域由凭据 api_region 控制(默认 us-east-1),无需也不展示 Base URL。
+    const credentials: Record<string, unknown> = {
+      api_key: apiKeyValue.value.trim()
+    }
+
+    const modelMapping = buildModelMappingObject('mapping', [], kiroModelMappings.value)
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+
+    if (poolModeEnabled.value) {
+      credentials.pool_mode = true
+      credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+    }
+
+    if (customErrorCodesEnabled.value) {
+      credentials.custom_error_codes_enabled = true
+      credentials.custom_error_codes = [...selectedErrorCodes.value]
+    }
+
+    await createAccountAndFinish('kiro', 'apikey', credentials)
+    return
+  }
+
+  // Kiro 外部中转(API Key + Base URL):存为 type=apikey,带 base_url → 后端走通用反代
+  if (form.platform === 'kiro' && accountCategory.value === 'apikey-relay') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
     if (!apiKeyBaseUrl.value.trim()) {
       appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
       return
@@ -5252,8 +5342,8 @@ const handleSubmit = async () => {
     }
 
     const credentials: Record<string, unknown> = {
-      base_url: apiKeyBaseUrl.value.trim(),
-      api_key: apiKeyValue.value.trim()
+      api_key: apiKeyValue.value.trim(),
+      base_url: apiKeyBaseUrl.value.trim()
     }
 
     const modelMapping = buildModelMappingObject('mapping', [], kiroModelMappings.value)
@@ -5453,7 +5543,7 @@ const createAccountAndFinish = async (
       delete credentials.compact_model_mapping
     }
   }
-  if (platform === 'kiro' && type === 'oauth') {
+  if (platform === 'kiro') {
     const kiroExtra: Record<string, unknown> = { ...(finalExtra || {}) }
     const unitPrice = Number(kiroCreditUnitPriceUsd.value ?? 0)
     kiroExtra.kiro_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
