@@ -698,6 +698,7 @@ func (r *opsRepository) BatchInsertSystemLogs(ctx context.Context, inputs []*ser
 		"request_id",
 		"client_request_id",
 		"user_id",
+		"api_key_id",
 		"account_id",
 		"platform",
 		"model",
@@ -739,6 +740,7 @@ func (r *opsRepository) BatchInsertSystemLogs(ctx context.Context, inputs []*ser
 			opsNullString(input.RequestID),
 			opsNullString(input.ClientRequestID),
 			opsNullInt64(input.UserID),
+			opsNullInt64(input.APIKeyID),
 			opsNullInt64(input.AccountID),
 			opsNullString(input.Platform),
 			opsNullString(input.Model),
@@ -805,6 +807,7 @@ SELECT
   COALESCE(l.request_id, ''),
   COALESCE(l.client_request_id, ''),
   l.user_id,
+  l.api_key_id,
   l.account_id,
   COALESCE(l.platform, ''),
   COALESCE(l.model, ''),
@@ -824,6 +827,7 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	for rows.Next() {
 		item := &service.OpsSystemLog{}
 		var userID sql.NullInt64
+		var apiKeyID sql.NullInt64
 		var accountID sql.NullInt64
 		var extraRaw string
 		if err := rows.Scan(
@@ -835,6 +839,7 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&item.RequestID,
 			&item.ClientRequestID,
 			&userID,
+			&apiKeyID,
 			&accountID,
 			&item.Platform,
 			&item.Model,
@@ -845,6 +850,10 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		if userID.Valid {
 			v := userID.Int64
 			item.UserID = &v
+		}
+		if apiKeyID.Valid {
+			v := apiKeyID.Int64
+			item.APIKeyID = &v
 		}
 		if accountID.Valid {
 			v := accountID.Int64
@@ -1118,6 +1127,11 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 			clauses = append(clauses, "l.user_id = $"+itoa(len(args)))
 			hasConstraint = true
 		}
+		if filter.APIKeyID != nil && *filter.APIKeyID > 0 {
+			args = append(args, *filter.APIKeyID)
+			clauses = append(clauses, "l.api_key_id = $"+itoa(len(args)))
+			hasConstraint = true
+		}
 		if filter.AccountID != nil && *filter.AccountID > 0 {
 			args = append(args, *filter.AccountID)
 			clauses = append(clauses, "l.account_id = $"+itoa(len(args)))
@@ -1157,6 +1171,7 @@ func buildOpsSystemLogsCleanupWhere(filter *service.OpsSystemLogCleanupFilter) (
 		RequestID:       filter.RequestID,
 		ClientRequestID: filter.ClientRequestID,
 		UserID:          filter.UserID,
+		APIKeyID:        filter.APIKeyID,
 		AccountID:       filter.AccountID,
 		Platform:        filter.Platform,
 		Model:           filter.Model,
