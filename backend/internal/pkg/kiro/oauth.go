@@ -41,6 +41,68 @@ const (
 	SocialProviderGitHub SocialProvider = "Github"
 )
 
+// Kiro 账号 provider 白名单。社交登录为 Google/Github;
+// IDC 登录按 startURL 区分为 BuilderId(个人 Builder ID)/ Enterprise(企业自建 IAM Identity Center)。
+const (
+	ProviderGoogle     = "Google"
+	ProviderGithub     = "Github"
+	ProviderBuilderId  = "BuilderId"
+	ProviderEnterprise = "Enterprise"
+)
+
+// IsValidKiroProvider 校验 provider 是否在白名单内(四值之一)。
+func IsValidKiroProvider(p string) bool {
+	switch strings.TrimSpace(p) {
+	case ProviderGoogle, ProviderGithub, ProviderBuilderId, ProviderEnterprise:
+		return true
+	default:
+		return false
+	}
+}
+
+// resolveIDCProvider 按 startURL 推导 IDC 子类型:
+// startURL 为空或等于默认 Builder ID start URL → BuilderId;其余视为企业自建 → Enterprise。
+// 仅用于「有 startURL」的写入路径(IDC 登录),刷新/导入路径不得调用本函数推导。
+func resolveIDCProvider(startURL string) string {
+	if strings.TrimSpace(startURL) == "" || strings.TrimSpace(startURL) == BuilderIDStartURL {
+		return ProviderBuilderId
+	}
+	return ProviderEnterprise
+}
+
+// normalizeKiroExpiresAt 把导入的 expiresAt 归一化为带本地时区偏移的 RFC3339。
+// 兼容多种来源格式:带 Z(UTC)、带毫秒、带时区偏移、naive(无时区,按 UTC 处理)。
+// 输出对齐 OAuth 登录流程(time.RFC3339 + 服务器本地时区)。
+func normalizeKiroExpiresAt(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("expiresAt is empty")
+	}
+	// 优先尝试带时区的标准格式(含 Z 或 ±hh:mm 偏移)。
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999999", // naive,无时区
+		"2006-01-02T15:04:05",
+	}
+	for i, layout := range layouts {
+		var (
+			t   time.Time
+			err error
+		)
+		if i >= 2 {
+			// naive 格式按 UTC 解析。
+			t, err = time.ParseInLocation(layout, value, time.UTC)
+		} else {
+			t, err = time.Parse(layout, value)
+		}
+		if err == nil {
+			return t.Local().Format(time.RFC3339), nil
+		}
+	}
+	return "", fmt.Errorf("invalid expiresAt format: %q", raw)
+}
+
 type AuthSession struct {
 	State        string
 	CodeVerifier string
@@ -340,7 +402,7 @@ func ExchangeIDCAuthCode(ctx context.Context, proxyURL, clientID, clientSecret, 
 		ProfileArn:   resp.ProfileArn,
 		ExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339),
 		AuthMethod:   "idc",
-		Provider:     "AWS",
+		Provider:     resolveIDCProvider(startURL),
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		StartURL:     startURL,
@@ -350,7 +412,7 @@ func ExchangeIDCAuthCode(ctx context.Context, proxyURL, clientID, clientSecret, 
 	return token, nil
 }
 
-func RefreshIDCToken(ctx context.Context, proxyURL, clientID, clientSecret, refreshToken, region, startURL string) (*TokenData, error) {
+func RefreshIDCToken(ctx context.Context, proxyURL, clientID, clientSecret, refreshToken, region, startURL, provider string) (*TokenData, error) {
 	if region == "" {
 		region = defaultIDCRegion
 	}
@@ -376,11 +438,16 @@ func RefreshIDCToken(ctx context.Context, proxyURL, clientID, clientSecret, refr
 		ProfileArn:   resp.ProfileArn,
 		ExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339),
 		AuthMethod:   "idc",
-		Provider:     "AWS",
+		// 刷新路径优先保留存量 provider(导入的 Enterprise 账号无 startURL,
+		// 不得用 startURL 重新推导,否则会退化为 BuilderId)。仅当存量为空时才按 startURL 兜底。
+		Provider:     strings.TrimSpace(provider),
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		StartURL:     startURL,
 		Region:       region,
+	}
+	if token.Provider == "" {
+		token.Provider = resolveIDCProvider(startURL)
 	}
 	token.Email = FetchOIDCUserEmail(ctx, proxyURL, token.AccessToken, region)
 	return token, nil
@@ -424,13 +491,24 @@ func ParseImportedToken(tokenJSON string, deviceRegistrationJSON string) (*Token
 	if token.AuthMethod == "" && strings.TrimSpace(token.ClientID) != "" && strings.TrimSpace(token.ClientSecret) != "" {
 		token.AuthMethod = "idc"
 	}
+	// provider 严格校验:必须显式提供且属于白名单(Google/Github/BuilderId/Enterprise),
+	// 空值或非法值一律拒绝,不再兜底为 AWS。
+	token.Provider = strings.TrimSpace(token.Provider)
+	if !IsValidKiroProvider(token.Provider) {
+		return nil, fmt.Errorf("unsupported or missing kiro provider: %q (must be one of Google/Github/BuilderId/Enterprise)", token.Provider)
+	}
 	if token.AuthMethod == "idc" {
-		if strings.TrimSpace(token.Provider) == "" {
-			token.Provider = "AWS"
-		}
 		if strings.TrimSpace(token.Region) == "" {
 			token.Region = defaultIDCRegion
 		}
+	}
+	// expiresAt 归一化为带本地时区偏移的 RFC3339,对齐 OAuth 登录流程。
+	if strings.TrimSpace(token.ExpiresAt) != "" {
+		normalized, err := normalizeKiroExpiresAt(token.ExpiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse kiro token expiresAt: %w", err)
+		}
+		token.ExpiresAt = normalized
 	}
 	return &token, nil
 }

@@ -3417,13 +3417,35 @@
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
       <div v-if="isKiroImportMode" class="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
+        <!-- Provider 选择:决定字段显隐与必填、示例 -->
         <div>
-          <label class="input-label">{{ t('admin.accounts.oauth.kiro.tokenJsonLabel') }}</label>
-          <textarea v-model="kiroTokenJson" rows="8" class="input font-mono text-xs" placeholder='{"accessToken":"...","refreshToken":"..."}'></textarea>
-          <p class="input-hint">{{ t('admin.accounts.oauth.kiro.tokenJsonHint') }}</p>
+          <label class="input-label">{{ t('admin.accounts.oauth.kiro.importProviderLabel') }}</label>
+          <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <label
+              v-for="opt in kiroImportProviderOptions"
+              :key="opt"
+              class="flex cursor-pointer items-center rounded-lg border px-3 py-2"
+              :class="kiroImportProvider === opt
+                ? 'border-primary-500 bg-primary-50 dark:border-primary-400 dark:bg-primary-900/20'
+                : 'border-gray-200 dark:border-dark-600'"
+            >
+              <input
+                v-model="kiroImportProvider"
+                type="radio"
+                :value="opt"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">{{ opt }}</span>
+            </label>
+          </div>
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.oauth.kiro.deviceRegistrationLabel') }}</label>
+          <label class="input-label">{{ t('admin.accounts.oauth.kiro.tokenJsonLabel') }} <span class="text-red-500">*</span></label>
+          <textarea v-model="kiroTokenJson" rows="8" class="input font-mono text-xs" :placeholder="kiroImportTokenPlaceholder"></textarea>
+          <p class="input-hint">{{ t('admin.accounts.oauth.kiro.tokenJsonHint') }}</p>
+        </div>
+        <div v-if="kiroImportNeedsDeviceRegistration">
+          <label class="input-label">{{ t('admin.accounts.oauth.kiro.deviceRegistrationLabel') }} <span class="text-red-500">*</span></label>
           <textarea v-model="kiroDeviceRegistrationJson" rows="6" class="input font-mono text-xs" placeholder='{"clientId":"...","clientSecret":"..."}'></textarea>
           <p class="input-hint">{{ t('admin.accounts.oauth.kiro.deviceRegistrationHint') }}</p>
         </div>
@@ -4077,6 +4099,18 @@ const kiroIDCStartUrl = ref('https://view.awsapps.com/start')
 const kiroIDCRegion = ref('us-east-1')
 const kiroTokenJson = ref('')
 const kiroDeviceRegistrationJson = ref('')
+// 「从 Kiro IDE 导入」provider 选择:决定字段显隐/必填/示例,并与 token JSON 内 provider 做一致性校验。
+const kiroImportProvider = ref<'Google' | 'Github' | 'BuilderId' | 'Enterprise'>('Google')
+const kiroImportProviderOptions = ['Google', 'Github', 'BuilderId', 'Enterprise'] as const
+// BuilderId/Enterprise(IDC)需 Device Registration JSON;Google/Github(社交)不需要。
+const kiroImportNeedsDeviceRegistration = computed(
+  () => kiroImportProvider.value === 'BuilderId' || kiroImportProvider.value === 'Enterprise'
+)
+const kiroImportTokenPlaceholder = computed(() =>
+  kiroImportNeedsDeviceRegistration.value
+    ? '{"accessToken":"...","refreshToken":"...","clientIdHash":"...","authMethod":"IdC","provider":"' + kiroImportProvider.value + '"}'
+    : '{"accessToken":"...","refreshToken":"...","authMethod":"social","provider":"' + kiroImportProvider.value + '"}'
+)
 const kiroModelMappings = ref<ModelMapping[]>([])
 const kiroCreditUnitPriceUsd = ref(0)
 const kiroPresetMappings = computed(() => getPresetMappingsByPlatform('kiro'))
@@ -4988,6 +5022,7 @@ const resetForm = () => {
   kiroIDCRegion.value = 'us-east-1'
   kiroTokenJson.value = ''
   kiroDeviceRegistrationJson.value = ''
+  kiroImportProvider.value = 'Google'
   kiroCreditUnitPriceUsd.value = 0
   fetchKiroDefaultMappings().then(mappings => {
     kiroModelMappings.value = [...mappings]
@@ -6487,7 +6522,37 @@ const handleExchangeCode = async () => {
 }
 
 const handleKiroImport = async () => {
-  if (!isKiroImportMode.value || !kiroTokenJson.value.trim()) return
+  if (!isKiroImportMode.value) return
+
+  // 必填校验:token JSON 必填;BuilderId/Enterprise 还需 Device Registration JSON。
+  if (!kiroTokenJson.value.trim()) {
+    kiroOAuth.error.value = t('admin.accounts.oauth.kiro.tokenJsonRequired')
+    appStore.showError(kiroOAuth.error.value)
+    return
+  }
+  if (kiroImportNeedsDeviceRegistration.value && !kiroDeviceRegistrationJson.value.trim()) {
+    kiroOAuth.error.value = t('admin.accounts.oauth.kiro.deviceRegistrationRequired')
+    appStore.showError(kiroOAuth.error.value)
+    return
+  }
+
+  // 一致性校验:token JSON 内 provider 必须与所选 radio 一致(后端白名单兜底)。
+  let parsedProvider = ''
+  try {
+    parsedProvider = String(JSON.parse(kiroTokenJson.value)?.provider ?? '').trim()
+  } catch {
+    kiroOAuth.error.value = t('admin.accounts.oauth.kiro.tokenJsonInvalid')
+    appStore.showError(kiroOAuth.error.value)
+    return
+  }
+  if (parsedProvider !== kiroImportProvider.value) {
+    kiroOAuth.error.value = t('admin.accounts.oauth.kiro.providerMismatch', {
+      selected: kiroImportProvider.value,
+      actual: parsedProvider || '-'
+    })
+    appStore.showError(kiroOAuth.error.value)
+    return
+  }
 
   const tokenInfo = await kiroOAuth.importToken(
     kiroTokenJson.value,
