@@ -4196,6 +4196,11 @@ export default {
           tokenJsonHint: '先在 Kiro IDE 完成登录，再粘贴 `~/.aws/sso/cache/kiro-auth-token.json` 的内容。',
           deviceRegistrationLabel: 'Device Registration JSON',
           deviceRegistrationHint: '可选。只有 token 文件里缺少完整客户端信息、只剩 `clientIdHash` 时才需要补充。',
+          importProviderLabel: '账号来源',
+          tokenJsonRequired: '请填写 Kiro Token JSON。',
+          deviceRegistrationRequired: 'BuilderId / Enterprise 账号必须填写 Device Registration JSON。',
+          tokenJsonInvalid: 'Kiro Token JSON 格式无效，无法解析。',
+          providerMismatch: '所选来源（{selected}）与 Token JSON 中的 provider（{actual}）不一致，请核对。',
           importAndUpdate: '导入并更新'
         }
       },

@@ -4029,6 +4029,11 @@ export default {
           tokenJsonHint: 'Sign in through Kiro IDE first, then paste the contents of `~/.aws/sso/cache/kiro-auth-token.json` here.',
           deviceRegistrationLabel: 'Device Registration JSON',
           deviceRegistrationHint: 'Optional. Only needed when the token file does not include full client details and only has `clientIdHash`.',
+          importProviderLabel: 'Account source',
+          tokenJsonRequired: 'Please provide the Kiro Token JSON.',
+          deviceRegistrationRequired: 'Device Registration JSON is required for BuilderId / Enterprise accounts.',
+          tokenJsonInvalid: 'Kiro Token JSON is invalid and cannot be parsed.',
+          providerMismatch: 'Selected source ({selected}) does not match the provider ({actual}) in the Token JSON. Please verify.',
           importAndUpdate: 'Import and Update'
         }
       },
