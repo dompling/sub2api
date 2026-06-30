@@ -252,7 +252,8 @@ const PLATFORM_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   gemini: 'Gemini',
   antigravity: 'Antigravity',
-  kiro: 'Kiro'
+  kiro: 'Kiro',
+  grok: 'Grok'
 }
 
 const platformLabel = (p: string) => PLATFORM_LABELS[p] ?? p
