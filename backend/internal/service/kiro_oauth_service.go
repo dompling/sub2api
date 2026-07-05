@@ -16,6 +16,11 @@ const (
 	kiroSocialRedirectURI = "http://localhost:49153"
 	// AWS IAM Identity Center native/public clients require an explicit loopback IP redirect URI.
 	kiroIDCRedirectURI = "http://127.0.0.1:9876/oauth/callback"
+	// External IdP(Microsoft Entra ID)第二阶段直连 Azure authorize/token 端点,
+	// redirect_uri 必须与 Kiro 官方 Azure 企业应用注册的白名单逐字符匹配。
+	// 官方登录流(kiro-login-helper)使用 3128 端口,不能复用社交登录的 49153——
+	// Azure 白名单与 app.kiro.dev 门户白名单相互独立,端口不符会被 Entra 拒绝(AADSTS50011)。
+	kiroExternalIdpRedirectURI = "http://localhost:3128/oauth/callback"
 )
 
 var kiroDiscoverExternalIdp = func(ctx context.Context, proxyURL, issuerURL string) (string, string, error) {
@@ -279,11 +284,9 @@ func (s *KiroOAuthService) prepareExternalIdpAuthorization(ctx context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("generate code verifier failed: %w", err)
 	}
-	baseRedirectURI := strings.TrimSpace(session.RedirectURI)
-	if baseRedirectURI == "" {
-		baseRedirectURI = kiroSocialRedirectURI
-	}
-	redirectURI := kiropkg.BuildSocialTokenRedirectURI(baseRedirectURI, "/oauth/callback", "")
+	// External IdP 第二阶段直连 Azure,redirect_uri 必须用官方 Azure 应用注册的端口(3128),
+	// 不能复用社交登录门户的 49153 端口(session.RedirectURI),否则 Entra 拒绝授权请求。
+	redirectURI := kiroExternalIdpRedirectURI
 	session.State = state
 	session.CodeVerifier = codeVerifier
 	session.ProxyURL = proxyURL

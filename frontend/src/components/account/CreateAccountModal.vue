@@ -3501,6 +3501,8 @@
         :show-codex-pat-option="form.platform === 'openai'"
         :platform="form.platform"
         :show-project-id="geminiOAuthType === 'code_assist'"
+        :is-kiro-external-idp="form.platform === 'kiro' && kiroAccountType === 'external_idp'"
+        :external-idp-stage="kiroOAuth.externalIdpStage.value"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
         @validate-refresh-token="handleValidateRefreshToken"
@@ -3596,7 +3598,9 @@
           {{
             currentOAuthLoading
               ? t('admin.accounts.oauth.verifying')
-              : t('admin.accounts.oauth.completeAuth')
+              : (form.platform === 'kiro' && kiroAccountType === 'external_idp' && kiroOAuth.externalIdpStage.value === 'portal')
+                ? t('admin.accounts.oauth.kiro.extIdpNextStep')
+                : t('admin.accounts.oauth.completeAuth')
           }}
         </button>
       </div>
