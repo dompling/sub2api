@@ -13,6 +13,10 @@ export function useKiroOAuth() {
   const state = ref('')
   const loading = ref(false)
   const error = ref('')
+  // External IdP(Microsoft Entra ID)两阶段登录进度：
+  // 'portal' = 阶段1，等待用户粘贴 Kiro 门户回调 descriptor；
+  // 'idp'    = 阶段2，已拿到 Entra 授权 URL，等待用户粘贴 M365 登录后的 code 回调。
+  const externalIdpStage = ref<'portal' | 'idp'>('portal')
 
   const resetState = () => {
     authUrl.value = ''
@@ -20,17 +24,19 @@ export function useKiroOAuth() {
     state.value = ''
     loading.value = false
     error.value = ''
+    externalIdpStage.value = 'portal'
   }
 
   const generateAuthUrl = async (
     proxyId: number | null | undefined,
-    provider: 'Google' | 'Github' = 'Google'
+    provider: 'Google' | 'Github' | 'ExternalIdp' = 'Google'
   ): Promise<boolean> => {
     loading.value = true
     error.value = ''
     authUrl.value = ''
     sessionId.value = ''
     state.value = ''
+    externalIdpStage.value = 'portal'
 
     try {
       const response = await adminAPI.kiro.generateAuthUrl({
@@ -89,7 +95,7 @@ export function useKiroOAuth() {
     loading.value = true
     error.value = ''
     try {
-      return await adminAPI.kiro.exchangeCode({
+      const response = await adminAPI.kiro.exchangeCode({
         session_id: params.sessionId,
         state: params.state,
         code: params.code.trim(),
@@ -97,6 +103,15 @@ export function useKiroOAuth() {
         login_option: params.loginOption,
         proxy_id: params.proxyId || undefined
       })
+      if (response.auth_url && response.session_id && response.state && !response.access_token) {
+        // External IdP 第一阶段完成：后端返回了 Entra 授权 URL，进入第二阶段。
+        authUrl.value = response.auth_url
+        sessionId.value = response.session_id
+        state.value = response.state
+        externalIdpStage.value = 'idp'
+        return null
+      }
+      return response
     } catch (err: any) {
       error.value = err.response?.data?.detail || t('admin.accounts.oauth.authFailed')
       appStore.showError(error.value)
@@ -115,6 +130,9 @@ export function useKiroOAuth() {
     startUrl?: string
     region?: string
     profileArn?: string
+    tokenEndpoint?: string
+    issuerUrl?: string
+    scopes?: string
     proxyId?: number | null
   }): Promise<KiroTokenInfo | null> => {
     loading.value = true
@@ -129,6 +147,9 @@ export function useKiroOAuth() {
         start_url: payload.startUrl,
         region: payload.region,
         profile_arn: payload.profileArn,
+        token_endpoint: payload.tokenEndpoint,
+        issuer_url: payload.issuerUrl,
+        scopes: payload.scopes,
         proxy_id: payload.proxyId || undefined
       })
     } catch (err: any) {
@@ -171,7 +192,10 @@ export function useKiroOAuth() {
     client_id_hash: tokenInfo.client_id_hash,
     email: tokenInfo.email,
     start_url: tokenInfo.start_url,
-    region: tokenInfo.region
+    region: tokenInfo.region,
+    token_endpoint: tokenInfo.token_endpoint,
+    issuer_url: tokenInfo.issuer_url,
+    scopes: tokenInfo.scopes
   })
 
   return {
@@ -180,6 +204,7 @@ export function useKiroOAuth() {
     state,
     loading,
     error,
+    externalIdpStage,
     resetState,
     generateAuthUrl,
     generateIDCAuthUrl,
