@@ -6238,8 +6238,7 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		setHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
 	}
 
-	// 账号级自定义请求头 + 请求头覆写（最后应用，覆写配置优先级最高）
-	applyAccountCustomHeaders(req, account)
+	// 账号级请求头覆写（最后应用，覆写配置优先级最高）
 	account.ApplyHeaderOverrides(req.Header)
 
 	return req, body, nil
@@ -7272,8 +7271,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		}
 	}
 
-	// 账号级自定义请求头 + 请求头覆写（最后应用，覆写配置优先级最高）
-	applyAccountCustomHeaders(req, account)
+	// 账号级请求头覆写（最后应用，覆写配置优先级最高）
 	account.ApplyHeaderOverrides(req.Header)
 
 	// === DEBUG: 打印上游转发请求（headers + body 摘要），与 CLIENT_ORIGINAL 对比 ===
@@ -7504,22 +7502,6 @@ func applyClaudeOAuthHeaderDefaults(req *http.Request) {
 		if getHeaderRaw(req.Header, key) == "" {
 			setHeaderRaw(req.Header, resolveWireCasing(key), value)
 		}
-	}
-}
-
-// applyAccountCustomHeaders 注入账号级自定义请求头。
-// 作为最后一步调用，覆盖同名 header。运行时兜底跳过禁止的 header。
-func applyAccountCustomHeaders(req *http.Request, account *Account) {
-	headers := account.GetCustomHeaders()
-	if len(headers) == 0 {
-		return
-	}
-	for k, v := range headers {
-		lower := strings.ToLower(strings.TrimSpace(k))
-		if IsForbiddenHeaderName(k) || accountCustomHeaderForbidden[lower] {
-			continue
-		}
-		setHeaderRaw(req.Header, k, v)
 	}
 }
 
