@@ -234,6 +234,49 @@ func TestAdminService_CreateGroup_NilImagePricing(t *testing.T) {
 	require.Nil(t, repo.created.ImagePrice4K)
 }
 
+func TestAdminService_CreateGroup_PreservesKiroRuntimeSettings(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+	sticky := false
+	ttl := 7200
+	ratio := 0.5
+	mode := KiroEndpointModeAuto
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:                        "kiro-runtime",
+		Platform:                    PlatformKiro,
+		RateMultiplier:              1,
+		KiroCacheEmulationEnabled:   true,
+		KiroAutoStickyEnabled:       &sticky,
+		KiroStickySessionTTLSeconds: &ttl,
+		KiroCacheEmulationRatio:     &ratio,
+		KiroEndpointMode:            &mode,
+	})
+	require.NoError(t, err)
+	require.Same(t, repo.created, group)
+	require.True(t, group.KiroCacheEmulationEnabled)
+	require.False(t, group.KiroAutoStickyEnabled)
+	require.Equal(t, 7200, group.KiroStickySessionTTLSeconds)
+	require.InDelta(t, 0.5, group.KiroCacheEmulationRatio, 1e-12)
+	require.Equal(t, KiroEndpointModeAuto, group.KiroEndpointMode)
+}
+
+func TestAdminService_CreateGroup_DefaultsKiroRuntimeSettings(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:           "kiro-defaults",
+		Platform:       PlatformKiro,
+		RateMultiplier: 1,
+	})
+	require.NoError(t, err)
+	require.True(t, group.KiroAutoStickyEnabled)
+	require.Equal(t, DefaultKiroStickySessionTTLSeconds, group.KiroStickySessionTTLSeconds)
+	require.InDelta(t, 1, group.KiroCacheEmulationRatio, 1e-12)
+	require.Equal(t, KiroEndpointModeQ, group.KiroEndpointMode)
+}
+
 func TestAdminService_CreateGroup_DefaultsGrokMediaGenerationEnabled(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	svc := &adminServiceImpl{groupRepo: repo}
@@ -377,6 +420,61 @@ func TestAdminService_UpdateGroup_WithVideoPricing(t *testing.T) {
 	require.InDelta(t, 0.09, *repo.updated.VideoPrice480P, 0.0001)
 	require.InDelta(t, 0.13, *repo.updated.VideoPrice720P, 0.0001)
 	require.InDelta(t, 0.19, *repo.updated.VideoPrice1080P, 0.0001)
+}
+
+func TestAdminService_UpdateGroup_PreservesKiroRuntimeSettings(t *testing.T) {
+	existingGroup := &Group{
+		ID:       1,
+		Name:     "existing-kiro",
+		Platform: PlatformKiro,
+		Status:   StatusActive,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+	cacheEnabled := true
+	sticky := true
+	ttl := 5400
+	ratio := 0.25
+	mode := KiroEndpointModeKRS
+
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
+		KiroCacheEmulationEnabled:   &cacheEnabled,
+		KiroAutoStickyEnabled:       &sticky,
+		KiroStickySessionTTLSeconds: &ttl,
+		KiroCacheEmulationRatio:     &ratio,
+		KiroEndpointMode:            &mode,
+	})
+	require.NoError(t, err)
+	require.Same(t, repo.updated, group)
+	require.True(t, group.KiroCacheEmulationEnabled)
+	require.True(t, group.KiroAutoStickyEnabled)
+	require.Equal(t, 5400, group.KiroStickySessionTTLSeconds)
+	require.InDelta(t, 0.25, group.KiroCacheEmulationRatio, 1e-12)
+	require.Equal(t, KiroEndpointModeKRS, group.KiroEndpointMode)
+}
+
+func TestAdminService_UpdateGroup_ClearsKiroRuntimeSettingsWhenPlatformChanges(t *testing.T) {
+	existingGroup := &Group{
+		ID:                          1,
+		Name:                        "existing-kiro",
+		Platform:                    PlatformKiro,
+		Status:                      StatusActive,
+		KiroCacheEmulationEnabled:   true,
+		KiroAutoStickyEnabled:       true,
+		KiroStickySessionTTLSeconds: 7200,
+		KiroCacheEmulationRatio:     0.5,
+		KiroEndpointMode:            KiroEndpointModeAuto,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{Platform: PlatformOpenAI})
+	require.NoError(t, err)
+	require.False(t, group.KiroCacheEmulationEnabled)
+	require.False(t, group.KiroAutoStickyEnabled)
+	require.Zero(t, group.KiroStickySessionTTLSeconds)
+	require.Zero(t, group.KiroCacheEmulationRatio)
+	require.Empty(t, group.KiroEndpointMode)
 }
 
 // TestAdminService_UpdateGroup_PartialImagePricing 测试仅更新部分 ImagePrice 字段

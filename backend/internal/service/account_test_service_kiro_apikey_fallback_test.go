@@ -52,9 +52,9 @@ func TestAccountTestService_KiroAPIKeyDirectAWSEndpoint(t *testing.T) {
 	// 直连 AWS Q endpoint,默认 us-east-1
 	require.Equal(t, "q.us-east-1.amazonaws.com", req.URL.Host)
 	require.Equal(t, "/generateAssistantResponse", req.URL.Path)
-	// API Key 走 Bearer + 小写 tokentype: API_KEY(对齐 kiro.rs)
+	// API Key 走 Bearer + TokenType: API_KEY(HTTP header names are case-insensitive).
 	require.Equal(t, "Bearer kiro-api-key", req.Header.Get("Authorization"))
-	require.Equal(t, []string{"API_KEY"}, req.Header["tokentype"])
+	require.Equal(t, []string{"API_KEY"}, req.Header["TokenType"])
 	require.Empty(t, req.Header.Get("x-api-key"))
 }
 

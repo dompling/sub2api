@@ -116,6 +116,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 			return nil, err
 		}
 		ComputeQuotaResetAt(account.Extra)
+		if isKiroDirectModeAccount(account) {
+			if err := ValidateKiroCreditUnitPriceFromExtra(account.Extra); err != nil {
+				return nil, err
+			}
+		}
 		NormalizeFixedQuotaWindows(account.Extra)
 	}
 	if input.ExpiresAt != nil && *input.ExpiresAt > 0 {
@@ -258,6 +263,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, err
 		}
 		ComputeQuotaResetAt(account.Extra)
+		if isKiroDirectModeAccount(account) {
+			if err := ValidateKiroCreditUnitPriceFromExtra(account.Extra); err != nil {
+				return nil, err
+			}
+		}
 		NormalizeFixedQuotaWindows(account.Extra)
 	}
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;

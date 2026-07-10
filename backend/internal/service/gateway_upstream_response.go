@@ -922,6 +922,14 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		usagePatch := s.extractSSEUsagePatch(event)
+		if eventType == "message_delta" {
+			if usageObj, ok := event["usage"].(map[string]any); ok {
+				if _, exists := usageObj["_sub2api_kiro_credits"]; exists {
+					delete(usageObj, "_sub2api_kiro_credits")
+					eventChanged = true
+				}
+			}
+		}
 		if anthropicStreamEventIsTerminal(eventName, dataLine) {
 			sawTerminalEvent = true
 		}
@@ -1124,6 +1132,8 @@ type sseUsagePatch struct {
 	hasCacheCreation5m       bool
 	cacheCreation1hTokens    int
 	hasCacheCreation1h       bool
+	kiroCredits              float64
+	hasKiroCredits           bool
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -1198,6 +1208,10 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		if v, ok := parseSSEUsageFloat(usageObj["_sub2api_kiro_credits"]); ok && v > 0 {
+			patch.kiroCredits = v
+			patch.hasKiroCredits = true
+		}
 		return patch
 	}
 
@@ -1227,6 +1241,33 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
 	}
+	if patch.hasKiroCredits {
+		usage.KiroCredits = patch.kiroCredits
+	}
+}
+
+func parseSSEUsageFloat(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return f, true
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
 }
 
 func parseSSEUsageInt(value any) (int, bool) {

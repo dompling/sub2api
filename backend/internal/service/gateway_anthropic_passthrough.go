@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/gin-gonic/gin"
 )
@@ -540,6 +541,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
+				restored = stripSub2apiInternalUsageFields(restored)
 				if _, err := io.WriteString(w, restored); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
@@ -609,6 +611,21 @@ func extractAnthropicSSEDataLine(line string) (string, bool) {
 	return line[start:], true
 }
 
+func stripSub2apiInternalUsageFields(line string) string {
+	if !strings.Contains(line, "_sub2api_kiro_credits") {
+		return line
+	}
+	data, ok := extractAnthropicSSEDataLine(line)
+	if !ok {
+		return line
+	}
+	cleaned, err := sjson.Delete(data, "usage._sub2api_kiro_credits")
+	if err != nil {
+		return line
+	}
+	return line[:len(line)-len(data)] + cleaned
+}
+
 func (s *GatewayService) parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	if usage == nil || data == "" || data == "[DONE]" {
 		return
@@ -654,6 +671,9 @@ func (s *GatewayService) parseSSEUsagePassthrough(data string, usage *ClaudeUsag
 			}
 			if cc1h.Exists() && cc1h.Int() > 0 {
 				usage.CacheCreation1hTokens = int(cc1h.Int())
+			}
+			if v := deltaUsage.Get("_sub2api_kiro_credits"); v.Exists() && v.Float() > 0 {
+				usage.KiroCredits = v.Float()
 			}
 		}
 	}

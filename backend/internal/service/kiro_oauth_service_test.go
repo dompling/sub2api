@@ -124,7 +124,7 @@ func TestKiroOAuthService_ExchangeCodePreparesExternalIdpAuthorizationFromDescri
 	require.NotEqual(t, "expected-state", result.State)
 	require.Contains(t, result.AuthURL, "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?")
 	require.Contains(t, result.AuthURL, "client_id=client-id")
-	require.Contains(t, result.AuthURL, "redirect_uri=http%3A%2F%2Flocalhost%3A49153%2Foauth%2Fcallback")
+	require.Contains(t, result.AuthURL, "redirect_uri=http%3A%2F%2Flocalhost%3A3128%2Foauth%2Fcallback")
 	require.Contains(t, result.AuthURL, "scope=openid+profile+offline_access")
 	require.Contains(t, result.AuthURL, "login_hint=user%40example.com")
 
@@ -137,7 +137,7 @@ func TestKiroOAuthService_ExchangeCodePreparesExternalIdpAuthorizationFromDescri
 	require.Equal(t, issuerURL, session.IssuerURL)
 	require.Equal(t, "openid profile offline_access", session.Scopes)
 	require.Equal(t, "user@example.com", session.LoginHint)
-	require.Equal(t, kiroSocialRedirectURI+"/oauth/callback", session.RedirectURI)
+	require.Equal(t, kiroExternalIdpRedirectURI, session.RedirectURI)
 	require.NotEqual(t, "initial-verifier", session.CodeVerifier)
 	require.Equal(t, result.State, session.State)
 }
