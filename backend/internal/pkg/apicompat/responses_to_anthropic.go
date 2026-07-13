@@ -442,6 +442,10 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 		return nil
 	}
 
+	if state.CurrentBlockType == "tool_use" {
+		state.CurrentToolHadDelta = true
+	}
+
 	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
 	if !ok {
 		return nil
