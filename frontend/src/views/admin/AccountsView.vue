@@ -236,6 +236,7 @@
                 <PlatformTypeBadge
                   :platform="row.platform"
                   :type="row.type"
+                  :auth-mode="getOpenAIAuthMode(row)"
                   :plan-type="getAccountPlanType(row)"
                   :overages-enabled="isKiroOveragesEnabled(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
@@ -1207,6 +1208,12 @@ function getAccountPlanType(row: any): string | undefined {
     )
   }
   return row.credentials?.plan_type || row.parent_plan_type || undefined
+}
+
+function getOpenAIAuthMode(row: any): string | undefined {
+  if (!row || row.platform !== 'openai' || row.type !== 'oauth') return undefined
+  const authMode = row.credentials?.auth_mode
+  return typeof authMode === 'string' && authMode.trim() ? authMode : undefined
 }
 
 // Antigravity 订阅等级辅助函数

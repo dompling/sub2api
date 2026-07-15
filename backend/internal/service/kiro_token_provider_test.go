@@ -77,6 +77,7 @@ func TestKiroTokenProviderGetAccessTokenReturnsRefreshedToken(t *testing.T) {
 		ID:       88,
 		Platform: PlatformKiro,
 		Type:     AccountTypeOAuth,
+		Status:   StatusActive,
 		Credentials: map[string]any{
 			"access_token":  "old-access",
 			"refresh_token": "old-refresh",

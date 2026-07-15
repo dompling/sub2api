@@ -254,6 +254,43 @@ describe('admin AccountsView — 影子行 parent_* OR 兜底展示', () => {
     wrapper.unmount()
   })
 
+  it('passes OpenAI auth mode and Kiro overages state to platform badges', async () => {
+    listAccounts.mockResolvedValue({
+      items: [
+        {
+          id: 301,
+          name: 'agent-identity',
+          platform: 'openai',
+          type: 'oauth',
+          credentials: { auth_mode: 'agent_identity' }
+        },
+        {
+          id: 302,
+          name: 'kiro-overages',
+          platform: 'kiro',
+          type: 'oauth',
+          credentials: { kiro_overages_enabled: true }
+        }
+      ],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+
+    const badges = wrapper.findAllComponents(PlatformTypeBadge)
+    const openAIBadge = badges.find((badge) => badge.props('platform') === 'openai')
+    const kiroBadge = badges.find((badge) => badge.props('platform') === 'kiro')
+
+    expect(openAIBadge?.props('authMode')).toBe('agent_identity')
+    expect(kiroBadge?.props('overagesEnabled')).toBe(true)
+
+    wrapper.unmount()
+  })
+
   it('passes fresh Grok billing and quota snapshots before stale credential fallbacks', async () => {
     const grokAccounts = [
       {
