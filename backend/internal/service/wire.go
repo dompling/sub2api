@@ -152,8 +152,8 @@ func ProvideAccountUsageService(
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
-	kiroTokenProvider *KiroTokenProvider,
 	openAIGatewayService *OpenAIGatewayService,
+	kiroTokenProvider *KiroTokenProvider,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -161,16 +161,15 @@ func ProvideAccountUsageService(
 		usageFetcher,
 		geminiQuotaService,
 		antigravityQuotaFetcher,
-		cache,
-		identityCache,
-		tlsFPProfileService,
 		grokQuotaFetcher,
 		grokQuotaService,
 		openAIQuotaService,
+		cache,
+		identityCache,
+		tlsFPProfileService,
 	)
-	service.SetKiroTokenProvider(kiroTokenProvider)
 	service.agentIdentityWS = openAIGatewayService
-	return service
+	return service.SetKiroTokenProvider(kiroTokenProvider)
 }
 
 func ProvideAccountTestService(
@@ -713,6 +712,7 @@ var ProviderSet = wire.NewSet(
 	NewCRSSyncService,
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
+	wire.Bind(new(GrokOAuthReconciler), new(*TokenRefreshService)),
 	ProvideAccountExpiryService,
 	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,

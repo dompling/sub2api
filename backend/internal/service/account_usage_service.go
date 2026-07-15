@@ -359,24 +359,13 @@ func NewAccountUsageService(
 	usageFetcher ClaudeUsageFetcher,
 	geminiQuotaService *GeminiQuotaService,
 	antigravityQuotaFetcher *AntigravityQuotaFetcher,
+	grokQuotaFetcher *GrokQuotaFetcher,
+	grokQuotaService *GrokQuotaService,
+	openAIQuotaService *OpenAIQuotaService,
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
-	optionalDeps ...any,
 ) *AccountUsageService {
-	var grokQuotaFetcher *GrokQuotaFetcher
-	var grokQuotaService *GrokQuotaService
-	var openAIQuotaService *OpenAIQuotaService
-	for _, dep := range optionalDeps {
-		switch v := dep.(type) {
-		case *GrokQuotaFetcher:
-			grokQuotaFetcher = v
-		case *GrokQuotaService:
-			grokQuotaService = v
-		case *OpenAIQuotaService:
-			openAIQuotaService = v
-		}
-	}
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
 		usageLogRepo:            usageLogRepo,

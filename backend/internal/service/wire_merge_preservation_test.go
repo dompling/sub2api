@@ -14,7 +14,7 @@ func TestProvideAccountUsageServicePreservesKiroAndAgentIdentityDependencies(t *
 
 	svc := ProvideAccountUsageService(
 		nil, nil, nil, nil, nil, nil, nil, nil,
-		NewUsageCache(), nil, nil, kiro, gateway,
+		NewUsageCache(), nil, nil, gateway, kiro,
 	)
 
 	require.Equal(t, kiro, svc.kiroTokenProvider)
