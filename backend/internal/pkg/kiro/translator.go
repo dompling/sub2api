@@ -3758,7 +3758,7 @@ func extractSemanticEvents(eventType string, event map[string]any, lastContentFr
 func normalizeStreamingToolInput(name, raw string) (string, map[string]any, bool) {
 	normalized := strings.TrimSpace(raw)
 	if normalized == "" {
-		return "", nil, false
+		normalized = "{}"
 	}
 	normalized = escapeControlCharsInStrings(normalized)
 	normalized = removeTrailingCommasOutsideStrings(normalized)
