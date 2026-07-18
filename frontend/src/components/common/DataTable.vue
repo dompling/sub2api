@@ -406,6 +406,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  data: () => [],
   loading: false,
   stickyFirstColumn: true,
   stickyActionsColumn: true,

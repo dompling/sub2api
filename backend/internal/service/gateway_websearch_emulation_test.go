@@ -145,6 +145,24 @@ func TestExtractSearchQueryFromBody_ArrayContentNoTextBlock(t *testing.T) {
 	require.Equal(t, "", extractSearchQueryFromBody([]byte(body)))
 }
 
+func TestWebSearchQueryForParsedRequestPrefersOriginalQuery(t *testing.T) {
+	original := "client query"
+	parsed := &ParsedRequest{
+		Body:              NewRequestBodyRef([]byte(`{"messages":[{"role":"user","content":"client query\n\nrule content"}]}`)),
+		OriginalUserQuery: &original,
+	}
+	require.Equal(t, "client query", webSearchQueryForParsedRequest(parsed))
+}
+
+func TestWebSearchQueryForParsedRequestPreservesCapturedEmptyQuery(t *testing.T) {
+	original := ""
+	parsed := &ParsedRequest{
+		Body:              NewRequestBodyRef([]byte(`{"messages":[{"role":"user","content":"rule content"}]}`)),
+		OriginalUserQuery: &original,
+	}
+	require.Empty(t, webSearchQueryForParsedRequest(parsed))
+}
+
 // --- buildSearchResultBlocks ---
 
 func TestBuildSearchResultBlocks_WithResults(t *testing.T) {

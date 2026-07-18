@@ -139,6 +139,25 @@ func extractSearchQueryFromBody(body []byte) string {
 	return extractWebSearchTextFromContent(lastMsg.Get("content"))
 }
 
+// ExtractWebSearchQueryFromBody returns the client-authored search query before
+// gateway-side prompt rules modify the forwarded request.
+func ExtractWebSearchQueryFromBody(body []byte) string {
+	return extractSearchQueryFromBody(body)
+}
+
+func webSearchQueryForParsedRequest(parsed *ParsedRequest) string {
+	if parsed == nil {
+		return ""
+	}
+	if parsed.OriginalUserQuery != nil {
+		return *parsed.OriginalUserQuery
+	}
+	if parsed.Body == nil {
+		return ""
+	}
+	return extractSearchQueryFromBody(parsed.Body.Bytes())
+}
+
 func extractWebSearchTextFromContent(content gjson.Result) string {
 	if content.Type == gjson.String {
 		return content.String()
@@ -167,7 +186,7 @@ func (s *GatewayService) handleWebSearchEmulation(
 		parsed.OnUpstreamAccepted()
 	}
 
-	query := extractSearchQueryFromBody(parsed.Body.Bytes())
+	query := webSearchQueryForParsedRequest(parsed)
 	if query == "" {
 		return nil, fmt.Errorf("web search emulation: no query found in messages")
 	}

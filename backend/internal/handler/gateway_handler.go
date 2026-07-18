@@ -72,6 +72,7 @@ type GatewayHandler struct {
 	apiKeyService             *service.APIKeyService
 	usageRecordWorkerPool     *service.UsageRecordWorkerPool
 	errorPassthroughService   *service.ErrorPassthroughService
+	promptRuleService         *service.PromptRuleService
 	contentModerationService  *service.ContentModerationService
 	concurrencyHelper         *ConcurrencyHelper
 	userMsgQueueHelper        *UserMsgQueueHelper
@@ -94,6 +95,7 @@ func NewGatewayHandler(
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
 	errorPassthroughService *service.ErrorPassthroughService,
+	promptRuleService *service.PromptRuleService,
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
 	cfg *config.Config,
@@ -129,6 +131,7 @@ func NewGatewayHandler(
 		apiKeyService:             apiKeyService,
 		usageRecordWorkerPool:     usageRecordWorkerPool,
 		errorPassthroughService:   errorPassthroughService,
+		promptRuleService:         promptRuleService,
 		contentModerationService:  contentModerationService,
 		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
 		userMsgQueueHelper:        umqHelper,
@@ -227,6 +230,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, contentModerationStatus(decision), contentModerationErrorCode(decision), decision.Message)
 		return
 	}
+
+	originalUserQuery := service.ExtractWebSearchQueryFromBody(body)
+	parsedReq.OriginalUserQuery = &originalUserQuery
+	body = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, reqModel, service.PromptRuleProtocolAnthropic, body)
 
 	// Track if we've started streaming (for error handling)
 	streamStarted := false

@@ -88,6 +88,9 @@ func RegisterAdminRoutes(
 		// 错误透传规则管理
 		registerErrorPassthroughRoutes(admin, h)
 
+		// 提示词注入规则管理
+		registerPromptRuleRoutes(admin, h)
+
 		// TLS 指纹模板管理
 		registerTLSFingerprintProfileRoutes(admin, h)
 
@@ -280,6 +283,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.GET("/capacity-summary", h.Admin.Group.GetCapacitySummary)
 		groups.PUT("/sort-order", h.Admin.Group.UpdateSortOrder)
 		groups.GET("/:id/models-list-candidates", h.Admin.Group.GetModelsListCandidates)
+		groups.GET("/:id/effective-models", h.Admin.Group.GetEffectiveModels)
 		groups.GET("/:id", h.Admin.Group.GetByID)
 		groups.POST("", h.Admin.Group.Create)
 		groups.PUT("/:id", h.Admin.Group.Update)
@@ -710,5 +714,16 @@ func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 			users.PUT("/:user_id", h.Admin.Affiliate.UpdateUserSettings)
 			users.DELETE("/:user_id", h.Admin.Affiliate.ClearUserSettings)
 		}
+	}
+}
+
+func registerPromptRuleRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	rules := admin.Group("/prompt-rules")
+	{
+		rules.GET("", h.Admin.PromptRule.List)
+		rules.GET("/:id", h.Admin.PromptRule.GetByID)
+		rules.POST("", h.Admin.PromptRule.Create)
+		rules.PUT("/:id", h.Admin.PromptRule.Update)
+		rules.DELETE("/:id", h.Admin.PromptRule.Delete)
 	}
 }

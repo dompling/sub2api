@@ -295,6 +295,10 @@ type ParsedRequest struct {
 	MaxTokens       int             // max_tokens 值（用于探测请求拦截）
 	SessionContext  *SessionContext // 可选：请求上下文区分因子（nil 时行为不变）
 
+	// OriginalUserQuery 保留规则应用前的最后一条用户文本，仅供本地 Web Search 仿真使用。
+	// nil 表示调用方未捕获；非 nil 的空字符串表示原请求确实没有可用查询。
+	OriginalUserQuery *string
+
 	// ExplicitSessionID 客户端通过 HTTP 请求头（X-Session-ID / Anthropic-Session-Id）
 	// 显式传递的会话标识符。由 Handler 层设置，不从请求体解析，因此 ReplaceBody 后保留。
 	// 一旦非空，GenerateSessionHash 将以最高优先级用它作为粘性会话 key（混入 APIKeyID 隔离用户）。

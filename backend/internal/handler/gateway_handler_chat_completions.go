@@ -104,6 +104,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	body = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, reqModel, service.PromptRuleProtocolOpenAIChat, body)
+
 	// Error passthrough binding
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)

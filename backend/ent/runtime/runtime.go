@@ -29,6 +29,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
+	"github.com/Wei-Shaw/sub2api/ent/promptrule"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/schema"
@@ -1512,6 +1513,63 @@ func init() {
 	promocodeusageDescUsedAt := promocodeusageFields[3].Descriptor()
 	// promocodeusage.DefaultUsedAt holds the default value on creation for the used_at field.
 	promocodeusage.DefaultUsedAt = promocodeusageDescUsedAt.Default.(func() time.Time)
+	promptruleMixin := schema.PromptRule{}.Mixin()
+	promptruleMixinFields0 := promptruleMixin[0].Fields()
+	_ = promptruleMixinFields0
+	promptruleFields := schema.PromptRule{}.Fields()
+	_ = promptruleFields
+	// promptruleDescCreatedAt is the schema descriptor for created_at field.
+	promptruleDescCreatedAt := promptruleMixinFields0[0].Descriptor()
+	// promptrule.DefaultCreatedAt holds the default value on creation for the created_at field.
+	promptrule.DefaultCreatedAt = promptruleDescCreatedAt.Default.(func() time.Time)
+	// promptruleDescUpdatedAt is the schema descriptor for updated_at field.
+	promptruleDescUpdatedAt := promptruleMixinFields0[1].Descriptor()
+	// promptrule.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	promptrule.DefaultUpdatedAt = promptruleDescUpdatedAt.Default.(func() time.Time)
+	// promptrule.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	promptrule.UpdateDefaultUpdatedAt = promptruleDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// promptruleDescName is the schema descriptor for name field.
+	promptruleDescName := promptruleFields[0].Descriptor()
+	// promptrule.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	promptrule.NameValidator = func() func(string) error {
+		validators := promptruleDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// promptruleDescEnabled is the schema descriptor for enabled field.
+	promptruleDescEnabled := promptruleFields[2].Descriptor()
+	// promptrule.DefaultEnabled holds the default value on creation for the enabled field.
+	promptrule.DefaultEnabled = promptruleDescEnabled.Default.(bool)
+	// promptruleDescOrder is the schema descriptor for order field.
+	promptruleDescOrder := promptruleFields[3].Descriptor()
+	// promptrule.DefaultOrder holds the default value on creation for the order field.
+	promptrule.DefaultOrder = promptruleDescOrder.Default.(int)
+	// promptruleDescRole is the schema descriptor for role field.
+	promptruleDescRole := promptruleFields[4].Descriptor()
+	// promptrule.DefaultRole holds the default value on creation for the role field.
+	promptrule.DefaultRole = promptruleDescRole.Default.(string)
+	// promptrule.RoleValidator is a validator for the "role" field. It is called by the builders before save.
+	promptrule.RoleValidator = promptruleDescRole.Validators[0].(func(string) error)
+	// promptruleDescContent is the schema descriptor for content field.
+	promptruleDescContent := promptruleFields[5].Descriptor()
+	// promptrule.ContentValidator is a validator for the "content" field. It is called by the builders before save.
+	promptrule.ContentValidator = promptruleDescContent.Validators[0].(func(string) error)
+	// promptruleDescAction is the schema descriptor for action field.
+	promptruleDescAction := promptruleFields[6].Descriptor()
+	// promptrule.DefaultAction holds the default value on creation for the action field.
+	promptrule.DefaultAction = promptruleDescAction.Default.(string)
+	// promptrule.ActionValidator is a validator for the "action" field. It is called by the builders before save.
+	promptrule.ActionValidator = promptruleDescAction.Validators[0].(func(string) error)
 	proxyMixin := schema.Proxy{}.Mixin()
 	proxyMixinHooks1 := proxyMixin[1].Hooks()
 	proxy.Hooks[0] = proxyMixinHooks1[0]

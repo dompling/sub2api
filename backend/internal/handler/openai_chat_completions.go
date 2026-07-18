@@ -94,6 +94,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.errorResponse(c, contentModerationStatus(decision), contentModerationErrorCode(decision), decision.Message)
 		return
 	}
+	body = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, reqModel, service.PromptRuleProtocolOpenAIChat, body)
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatChat) {
 		return
 	}

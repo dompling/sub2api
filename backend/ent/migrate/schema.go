@@ -1306,6 +1306,39 @@ var (
 			},
 		},
 	}
+	// PromptRulesColumns holds the columns for the "prompt_rules" table.
+	PromptRulesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 200},
+		{Name: "description", Type: field.TypeString, Nullable: true, Size: 2147483647},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "order", Type: field.TypeInt, Default: 0},
+		{Name: "role", Type: field.TypeString, Size: 20, Default: "system"},
+		{Name: "content", Type: field.TypeString, Size: 2147483647},
+		{Name: "action", Type: field.TypeString, Size: 10, Default: "prepend"},
+		{Name: "group_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "model_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+	}
+	// PromptRulesTable holds the schema information for the "prompt_rules" table.
+	PromptRulesTable = &schema.Table{
+		Name:       "prompt_rules",
+		Columns:    PromptRulesColumns,
+		PrimaryKey: []*schema.Column{PromptRulesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "promptrule_enabled",
+				Unique:  false,
+				Columns: []*schema.Column{PromptRulesColumns[5]},
+			},
+			{
+				Name:    "promptrule_order",
+				Unique:  false,
+				Columns: []*schema.Column{PromptRulesColumns[6]},
+			},
+		},
+	}
 	// ProxiesColumns holds the columns for the "proxies" table.
 	ProxiesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -2018,6 +2051,7 @@ var (
 		PendingAuthSessionsTable,
 		PromoCodesTable,
 		PromoCodeUsagesTable,
+		PromptRulesTable,
 		ProxiesTable,
 		RedeemCodesTable,
 		SecuritySecretsTable,
@@ -2126,6 +2160,9 @@ func init() {
 	PromoCodeUsagesTable.ForeignKeys[1].RefTable = UsersTable
 	PromoCodeUsagesTable.Annotation = &entsql.Annotation{
 		Table: "promo_code_usages",
+	}
+	PromptRulesTable.Annotation = &entsql.Annotation{
+		Table: "prompt_rules",
 	}
 	ProxiesTable.ForeignKeys[0].RefTable = ProxiesTable
 	ProxiesTable.Annotation = &entsql.Annotation{

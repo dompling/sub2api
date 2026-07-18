@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -93,6 +94,111 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 		}
 	}
 	return candidates, nil
+}
+
+func (s *adminServiceImpl) GetGroupEffectiveModels(ctx context.Context, id int64) ([]string, error) {
+	group, err := s.groupRepo.GetByIDLite(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.accountRepo == nil {
+		return resolveGroupEffectiveModels(group, nil), nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return resolveGroupEffectiveModels(group, accounts), nil
+}
+
+func resolveGroupEffectiveModels(group *Group, accounts []Account) []string {
+	if group == nil {
+		return nil
+	}
+
+	modelSet := make(map[string]struct{})
+	matchingAccounts := 0
+	for i := range accounts {
+		if accounts[i].Platform != group.Platform {
+			continue
+		}
+		matchingAccounts++
+		for modelID := range accounts[i].GetModelMapping() {
+			modelID = strings.TrimSpace(modelID)
+			if modelID != "" {
+				modelSet[modelID] = struct{}{}
+			}
+		}
+	}
+	if matchingAccounts == 0 {
+		return nil
+	}
+
+	models := make([]string, 0, len(modelSet))
+	for modelID := range modelSet {
+		models = append(models, modelID)
+	}
+	sort.Strings(models)
+
+	defaults := defaultModelsListCandidateIDs(group.Platform)
+	if len(models) == 0 {
+		models = append([]string(nil), defaults...)
+	}
+	if !group.CustomModelsListEnabled() {
+		return models
+	}
+
+	allowedSource := models
+	if group.Platform == PlatformAnthropic && len(modelSet) > 0 {
+		allowedSource = mergeUniqueModelIDs(models, defaults)
+	}
+	return filterEffectiveModels(allowedSource, group.ModelsListConfig.Models)
+}
+
+func mergeUniqueModelIDs(modelLists ...[]string) []string {
+	seen := make(map[string]struct{})
+	merged := make([]string, 0)
+	for _, models := range modelLists {
+		for _, modelID := range models {
+			modelID = strings.TrimSpace(modelID)
+			if modelID == "" {
+				continue
+			}
+			if _, exists := seen[modelID]; exists {
+				continue
+			}
+			seen[modelID] = struct{}{}
+			merged = append(merged, modelID)
+		}
+	}
+	return merged
+}
+
+func filterEffectiveModels(available, selected []string) []string {
+	filtered := make([]string, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	for _, modelID := range selected {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" || !effectiveModelsAllow(available, modelID) {
+			continue
+		}
+		if _, exists := seen[modelID]; exists {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		filtered = append(filtered, modelID)
+	}
+	return filtered
+}
+
+func effectiveModelsAllow(available []string, modelID string) bool {
+	for _, pattern := range available {
+		if pattern == modelID || strings.HasSuffix(pattern, "*") && strings.HasPrefix(modelID, strings.TrimSuffix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultModelsListCandidateIDs(platform string) []string {
