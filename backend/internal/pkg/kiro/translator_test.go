@@ -1651,7 +1651,7 @@ func extractStreamedToolInputJSON(t *testing.T, sse, toolUseID string) string {
 			if idx, ok := evt["index"].(float64); ok && int(idx) == targetIndex {
 				if delta, _ := evt["delta"].(map[string]any); delta != nil {
 					if pj, ok := delta["partial_json"].(string); ok {
-						sb.WriteString(pj)
+						_, _ = sb.WriteString(pj)
 					}
 				}
 			}
@@ -2721,7 +2721,9 @@ func TestStreamEventStreamAsAnthropicCapturesKiroCredits(t *testing.T) {
 	require.NotNil(t, delta)
 	usageMap, ok := delta["usage"].(map[string]any)
 	require.True(t, ok)
-	require.InDelta(t, 0.17, usageMap["_sub2api_kiro_credits"].(float64), 0.000001)
+	credits, ok := usageMap["_sub2api_kiro_credits"].(float64)
+	require.True(t, ok)
+	require.InDelta(t, 0.17, credits, 0.000001)
 }
 
 func TestStreamEventStreamAsAnthropicStreamingToolInputCountsOutputTokens(t *testing.T) {

@@ -1141,6 +1141,7 @@ func (k oidcJWK) publicKey() (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode ec y: %w", err)
 		}
+		//nolint:staticcheck // ecdsa.PublicKey still requires elliptic.Curve coordinates.
 		if !curve.IsOnCurve(x, y) {
 			return nil, errors.New("ec point is not on curve")
 		}

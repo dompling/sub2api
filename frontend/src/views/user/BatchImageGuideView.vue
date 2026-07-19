@@ -615,16 +615,14 @@
                 class="input h-9 text-sm"
                 placeholder="Custom ID 可选"
               />
-              <select
-                v-model.number="outputCountDraft"
-                class="batch-output-count-select input h-9 text-sm"
+              <Select
+                :model-value="outputCountDraft"
+                :options="outputCountSelectOptions"
+                class="batch-output-count-select h-9 text-sm"
                 title="每条生成张数"
                 aria-label="每条生成张数"
-              >
-                <option v-for="count in outputCountOptions" :key="count" :value="count">
-                  {{ count }} 张
-                </option>
-              </select>
+                @update:model-value="outputCountDraft = Number($event ?? 1)"
+              />
               <label
                 class="btn btn-secondary h-9 cursor-pointer justify-center text-sm"
                 :class="referenceImageDrafts.length >= selectedModelReferenceLimit ? 'pointer-events-none opacity-60' : ''"
@@ -831,6 +829,7 @@ const PREVIEW_CACHE_MAX_BYTES = 48 * 1024 * 1024
 const BATCH_IMAGE_MAX_OUTPUTS_PER_ITEM = 4
 const BATCH_IMAGE_MAX_OUTPUTS_PER_JOB = 200
 const outputCountOptions = Array.from({ length: BATCH_IMAGE_MAX_OUTPUTS_PER_ITEM }, (_, index) => index + 1)
+const outputCountSelectOptions: SelectOption[] = outputCountOptions.map(count => ({ value: count, label: `${count} 张` }))
 const batchPageSizeOptions: SelectOption[] = [20, 50, 100].map(size => ({ value: size, label: String(size) }))
 
 const appStore = useAppStore()

@@ -53,9 +53,11 @@ func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 		client = http.DefaultClient
 	}
 	if req == nil || !Active(req.Context()) {
+		// #nosec G704 -- the caller owns destination validation; this helper only instruments the request.
 		return client.Do(req)
 	}
 	startedAt := time.Now()
+	// #nosec G704 -- the caller owns destination validation; this helper only instruments the request.
 	response, err := client.Do(req)
 	RecordDependency(req.Context(), dependencyModule(req), startedAt, time.Now())
 	return response, err

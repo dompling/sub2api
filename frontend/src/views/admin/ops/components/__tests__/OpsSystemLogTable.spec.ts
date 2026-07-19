@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import OpsSystemLogTable from '../OpsSystemLogTable.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 
@@ -73,7 +74,6 @@ const sinkHealth = {
 describe('OpsSystemLogTable host support', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     mockListSystemLogs.mockResolvedValue({
       items: [
         {
@@ -121,6 +121,9 @@ describe('OpsSystemLogTable host support', () => {
     const cleanupButton = wrapper.findAll('button').find((button) => button.text() === 'admin.ops.systemLogs.cleanCurrentFilters')
     expect(cleanupButton).toBeDefined()
     await cleanupButton!.trigger('click')
+    const cleanupDialog = wrapper.findAllComponents(ConfirmDialog).find((dialog) => dialog.props('show'))
+    expect(cleanupDialog).toBeDefined()
+    cleanupDialog!.vm.$emit('confirm')
     await flushPromises()
 
     expect(mockCleanupSystemLogs).toHaveBeenCalledWith(expect.objectContaining({ host: 'api-node-2' }))

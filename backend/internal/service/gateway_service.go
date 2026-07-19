@@ -917,7 +917,7 @@ func isKiroGroup(group *Group) bool {
 
 // BindStickySession sets session -> account binding with standard TTL.
 func (s *GatewayService) BindStickySession(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
-	return s.BindStickySessionWithTTL(ctx, groupID, sessionHash, accountID, stickySessionTTL)
+	return s.BindStickySessionWithTTL(ctx, groupID, sessionHash, accountID, s.stickySessionTTLForGroupID(ctx, groupID))
 }
 
 func (s *GatewayService) BindStickySessionForGroup(ctx context.Context, groupID *int64, sessionHash string, accountID int64, group *Group) error {
@@ -1405,18 +1405,21 @@ func (s *GatewayService) initDebugGatewayBodyFile(path string) {
 	}
 
 	// 如果 path 指向一个已存在的目录，自动追加默认文件名
+	// #nosec G703 -- this operator-controlled debug destination intentionally accepts a configured path.
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		path = filepath.Join(path, debugGatewayBodyDefaultFilename)
 	}
 
 	// 确保父目录存在
 	if dir := filepath.Dir(path); dir != "." {
+		// #nosec G703 -- dir is derived from the explicitly configured debug destination.
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			slog.Error("failed to create gateway debug log directory", "dir", dir, "error", err)
 			return
 		}
 	}
 
+	// #nosec G703 -- writing to the configured debug destination is the feature's purpose.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		slog.Error("failed to open gateway debug log file", "path", path, "error", err)

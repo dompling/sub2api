@@ -40,3 +40,14 @@
 - Fork locale source: `ec7b8443:frontend/src/i18n/locales/{en,zh}.ts`
 - Merge base: `9d5f1b73`
 - Merge commits: `c8895784`, `16a57987`
+
+## Merge 2026-07-19 Findings
+- The pending merge is `4fb4d3adc` plus `d4b9797ff`, with 15 unmerged paths.
+- `wire_gen.go`, `ent/group.go`, and `ent/mutation.go` are generated artifacts and must be regenerated after source resolution.
+- `handler/wire.go` has an unmarked semantic conflict: provider calls omit `PromptRuleService` even though constructors and handler fields still require it.
+- OpenAI gateway must retain prompt-rule injection, security-audit coordination, and Grok media eligibility probing.
+- The upstream explicit image-intent behavior fixes passive `image_gen` declarations being treated as active generation requests.
+- Group creation must normalize fork runtime fields before the upstream helper persists the entity and enqueues the scheduler outbox event.
+- Backup and Settings conflicts are additive: existing confirmation dialogs and upstream TOTP step-up controls are both required.
+- Locale index/common conflicts are additive exports and labels for Prompt Rules, security audit, prompt audit, content moderation, and audit logs.
+- Conflicted Accounts/Users tests each replace rather than supersede the other side; both behaviors need separate test cases.

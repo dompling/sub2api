@@ -82,3 +82,64 @@
 | What's the goal? | Preserve all fork behavior across the upstream merge |
 | What have I learned? | See `findings.md` |
 | What have I done? | See above |
+
+---
+
+## Session: 2026-07-19 Merge official/main
+
+### Phase 1: Backend Semantic Resolution
+- **Status:** complete
+- Confirmed 15 unmerged paths and identified generated versus semantic conflicts.
+- Confirmed the user-selected strategy is to preserve both feature sets and complete the merge commit.
+- Identified an unmarked PromptRuleService provider wiring mismatch that would fail compilation after marker removal.
+- Merged prompt-rule injection with security-audit coordination and explicit image-intent handling.
+- Merged group normalization with shared create/duplicate persistence and scheduler outbox emission.
+- Merged all fork/upstream Ops upstream-error sanitization fields.
+- Repaired both gateway providers to inject PromptRuleService.
+
+### Phase 2: Generated Code
+- **Status:** complete
+- Applied minimal compile-only unions required for Ent to load the conflicted package.
+- Regenerated Ent and Wire successfully from authoritative schema/provider sources.
+- Confirmed generated Wire includes Prompt Rules, security audit, audit logs, Grok quota service, and upstream cleanup services.
+- Confirmed generated Group code includes both duplicate-operation and Kiro endpoint fields.
+
+### Phase 3: Frontend Semantic Resolution
+- **Status:** complete
+- Preserved the shared Select control while adding step-up handling to administrator creation.
+- Preserved Backup and Settings application dialogs while adding their TOTP controllers.
+- Merged Prompt Rules, audit, prompt audit, content moderation, and audit-log locale exports/labels in both languages.
+- Split competing Accounts assertions into independent badge and safe-link tests.
+- Consolidated Users stubs into a reusable helper and retained Kiro, sorting, and cross-page bulk-selection coverage.
+
+### Phase 4: Verification
+- **Status:** complete
+- Frontend typecheck passed.
+- Seven focused frontend suites passed: 7 files and 51 tests.
+- Focused backend server, handler, repository, service, and securityaudit packages passed.
+- Frontend ESLint passed.
+- Full frontend run: 190 files and 1285 tests passed; 1 suite and 3 tests failed, exposing unmarked merge issues.
+- Backend `go test ./...` passed; the following `golangci-lint` step reported 19 issues.
+- Replaced native selects and browser confirms introduced by the upstream side with the shared application controls and updated their tests.
+- Cleared all 19 backend lint findings, including restored Kiro/Grok platform union behavior, Kiro stream keepalives, sticky-session TTL selection, and the unreachable Grok reset success branch.
+- Final backend `go test ./...` and `golangci-lint run ./...` passed.
+- Final frontend typecheck, ESLint, and full Vitest run passed: 193 files and 1290 tests.
+- Root production build passed with existing Vite chunk warnings only.
+- Ent/Wire regeneration was deterministic: generated diff hashes matched before and after `make generate`.
+- Original conflict paths contain no markers and `git diff --check` passed.
+
+### Phase 5: Merge Commit
+- **Status:** complete
+- Staged all 545 paths in the complete merge resolution; the index contains no unmerged entries.
+- Verified all staged source and documentation paths pass whitespace checks except the intentionally byte-preserved source-freeze patch artifact.
+- Prepared the existing merge message for the final local merge commit; no push is part of this task.
+
+## Error Log
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-07-19 | Initial planning-file append used a stale progress anchor | 1 | No changes applied; retried with exact file-tail anchors |
+| 2026-07-19 | Ent generation could not load conflicted generated Go files | 1 | Applied minimal compile-only unions before rerunning generation |
+| 2026-07-19 | Full frontend tests exposed native controls/dialog APIs, missing installed compiler dependency, and Ops cleanup failure | 1 | Inspecting and repairing unmarked merge regressions |
+| 2026-07-19 | Backend lint reported 19 issues after all Go tests passed | 1 | Classifying and fixing merge-related and mechanical findings |
+| 2026-07-19 | Staticcheck proved the Grok reset handler's success response was unreachable | 1 | Directly forward the service's validation or unsupported-operation error while preserving route compatibility |
+| 2026-07-19 | Cached whitespace check flagged the upstream source-freeze patch artifact | 1 | Preserved the evidence file byte-for-byte and confirmed the remaining staged tree passes the check |

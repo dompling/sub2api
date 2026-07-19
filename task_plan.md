@@ -50,3 +50,60 @@ Complete
 | Focused unit suite initially failed on additional losses and stale assertions | 1 | Restored missing data flow and updated assertions only where later intentional behavior superseded them |
 | Frontend lint found consecutive Kiro/Grok returns | 1 | Combined both merge sides into one reachable manual-input condition |
 | `make generate` was invoked from the repository root | 1 | Re-ran from `backend/`, where the target is defined; generation produced no diff |
+
+---
+
+# Task Plan: Merge official/main into main (2026-07-19)
+
+## Goal
+Resolve all current merge conflicts while preserving both fork and upstream behavior, verify the merged repository, and create the pending merge commit without pushing it.
+
+## Current Phase
+Complete
+
+## Phases
+
+### Phase 1: Backend Semantic Resolution
+- [x] Merge gateway prompt rules with security audit and image-intent fixes
+- [x] Merge group persistence normalization with duplicate/outbox behavior
+- [x] Merge Ops sanitization fields and repair provider wiring
+- **Status:** complete
+
+### Phase 2: Generated Code
+- [x] Regenerate Ent and Wire from authoritative sources
+- [x] Confirm generated files contain both feature sets
+- **Status:** complete
+
+### Phase 3: Frontend Semantic Resolution
+- [x] Merge step-up flows with existing app controls
+- [x] Merge locale exports and navigation labels
+- [x] Preserve both sides of conflicted frontend tests
+- **Status:** complete
+
+### Phase 4: Verification
+- [x] Run conflict-marker, formatting, targeted test, full test, and build checks
+- [x] Resolve any unmarked semantic conflicts exposed by verification
+- **Status:** complete
+
+### Phase 5: Merge Commit
+- [x] Stage resolved/generated files and confirm no unmerged entries
+- [x] Create the pending merge commit using the existing merge message
+- **Status:** complete
+
+## Decisions Made
+| Decision | Rationale |
+|----------|-----------|
+| Preserve both fork and upstream features | User selected the feature-union strategy |
+| Audit original input before prompt-rule injection | Prevent injected system rules from being treated as user input while retaining both controls |
+| Regenerate Ent and Wire | Schema/provider sources are authoritative and both generated sides are incomplete |
+| Keep application dialogs and add step-up around sensitive calls | Preserves established UX while adding upstream security gates |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| Initial planning-file append used a stale progress anchor | 1 | No changes applied; retried with exact file-tail anchors |
+| Ent generation could not load conflicted generated Go files | 1 | Apply minimal compile-only unions, then rerun the authoritative generator |
+| Full frontend tests found native-control/dialog policy violations, a missing dependency install, and an Ops cleanup interaction failure | 1 | Inspect each failure and repair unmarked merge regressions before rerunning |
+| Backend tests passed but golangci-lint reported 19 issues | 1 | Classify auto-merge regressions versus mechanical/static-analysis findings and fix in scope |
+| Staticcheck identified an unreachable Grok quota-reset success branch | 1 | Preserve the unsupported endpoint contract and directly forward its required error from the handler |
+| Cached whitespace check reported errors inside an upstream source-freeze patch | 1 | Preserve the archival patch byte-for-byte and verify all other staged paths with that evidence file excluded |
