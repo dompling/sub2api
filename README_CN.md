@@ -36,7 +36,7 @@
 - **Telegram**：[点击加入](https://t.me/+Pv3T6ncordwxOTZl)
 - **微信群**：扫描下方二维码
 
-<img src="assets/community/wechat-group.jpg" alt="微信交流群二维码" width="280">
+<img src="https://github.com/user-attachments/assets/9a169c36-2414-48bf-ad7b-14775c301ac9" alt="微信交流群二维码" width="280">
 
 ## 项目概述
 
