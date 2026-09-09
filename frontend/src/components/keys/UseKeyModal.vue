@@ -1234,7 +1234,8 @@ function generateRoutedCodexFiles(
     kimi: 'Kimi',
     zhipu: 'Zhipu',
     deepseek: 'DeepSeek',
-    composite: 'Composite'
+    composite: 'Composite',
+    codebuddy: 'CodeBuddy/WorkBuddy'
   }
   const label = labels[platform]
   const envContent = isWindows

@@ -98,6 +98,7 @@ func NewTokenRefreshService(
 	schedulerCache SchedulerCache,
 	cfg *config.Config,
 	tempUnschedCache TempUnschedCache,
+	codeBuddyOAuthService *CodeBuddyOAuthService,
 	grokOAuthServices ...*GrokOAuthService,
 ) *TokenRefreshService {
 	refreshCfg := &config.TokenRefreshConfig{}
@@ -131,6 +132,7 @@ func NewTokenRefreshService(
 		grokOAuthService = grokOAuthServices[0]
 	}
 	grokRefresher := NewGrokTokenRefresher(grokOAuthService)
+	codeBuddyRefresher := NewCodeBuddyTokenRefresher(codeBuddyOAuthService)
 
 	// Each provider is registered exactly once. The same registry supplies both
 	// execution and repository eligibility, preventing future platform drift.
@@ -141,6 +143,7 @@ func NewTokenRefreshService(
 		{platform: PlatformAntigravity, refresher: agRefresher, executor: agRefresher},
 		{platform: PlatformKiro, refresher: kiroRefresher, executor: kiroRefresher},
 		{platform: PlatformGrok, refresher: grokRefresher, executor: grokRefresher},
+		{platform: PlatformCodeBuddy, refresher: codeBuddyRefresher, executor: codeBuddyRefresher},
 	}
 
 	return s

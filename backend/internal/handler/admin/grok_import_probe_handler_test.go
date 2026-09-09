@@ -107,7 +107,7 @@ func TestAccountCreateWithoutAutomaticGrokProbeServiceStillSucceeds(t *testing.T
 	handler := NewAccountHandler(
 		newGrokImportAdminService(),
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-	)
+		nil)
 
 	router := gin.New()
 	router.POST("/api/v1/admin/accounts", handler.Create)

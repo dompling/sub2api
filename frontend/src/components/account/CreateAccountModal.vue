@@ -175,6 +175,22 @@
           </button>
           <button
             type="button"
+            @click="form.platform = 'codebuddy'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'codebuddy'
+                ? 'bg-white text-violet-600 shadow-sm dark:bg-dark-600 dark:text-violet-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="codebuddy" size="sm" />
+            CodeBuddy/WorkBuddy
+          </button>
+        </div>
+        <!-- CN providers row: Kimi / Zhipu GLM / DeepSeek -->
+        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700">
+          <button
+            type="button"
             @click="selectCNPlatform('kimi')"
             :class="[
               'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
@@ -555,6 +571,41 @@
             </div>
           </button>
         </div>
+      </div>
+
+      <!-- Account Type Selection (CodeBuddy) -->
+      <div v-if="form.platform === 'codebuddy'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
+          <button
+            type="button"
+            @click="accountCategory = 'oauth-based'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'oauth-based'
+                ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/20'
+                : 'border-gray-200 hover:border-violet-300 dark:border-dark-600 dark:hover:border-violet-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'oauth-based'
+                  ? 'bg-violet-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <PlatformIcon platform="codebuddy" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.oauth.codebuddy.oauthOnlyHint') }}</span>
+            </div>
+          </button>
+        </div>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.oauth.codebuddy.oauthOnlyHint') }}
+        </p>
       </div>
 
       <!-- Zhipu 团队版 Coding Plan：组织/项目 ID（可选，填写后额度探测走团队版端点） -->
@@ -2724,7 +2775,7 @@
 
       <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
       <div
-        v-if="(form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow"
+        v-if="(form.platform === 'openai' || form.platform === 'grok' || form.platform === 'codebuddy') && isOAuthFlow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -3958,7 +4009,7 @@
         :show-proxy-warning="form.platform !== 'openai' && form.platform !== 'grok' && !!form.proxy_id"
         :allow-multiple="form.platform === 'anthropic'"
         :show-cookie-option="form.platform === 'anthropic'"
-        :show-refresh-token-option="form.platform === 'openai' || form.platform === 'antigravity' || form.platform === 'grok'"
+        :show-refresh-token-option="form.platform === 'openai' || form.platform === 'antigravity' || form.platform === 'grok' || form.platform === 'codebuddy'"
         :show-mobile-refresh-token-option="form.platform === 'openai'"
         :show-session-token-option="false"
         :show-access-token-option="false"
@@ -3969,12 +4020,15 @@
         :show-email-password-option="false"
         :show-manual-option="true"
         :initial-input-method="'manual'"
+        :initial-oauth-state="currentOAuthState"
+        :state-verified="form.platform === 'codebuddy' && codeBuddyVerified"
         :platform="form.platform"
         :show-project-id="geminiOAuthType === 'code_assist'"
         :is-kiro-external-idp="form.platform === 'kiro' && kiroAccountType === 'external_idp'"
         :external-idp-stage="kiroOAuth.externalIdpStage.value"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
+        @verify-auth-state="handleVerifyAuthState"
         @validate-refresh-token="handleValidateRefreshToken"
         @validate-mobile-refresh-token="handleOpenAIValidateMobileRT"
         @validate-session-token="handleValidateSessionToken"
@@ -4337,6 +4391,8 @@ import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import { useKiroOAuth } from '@/composables/useKiroOAuth'
 import { useGrokOAuth } from '@/composables/useGrokOAuth'
+import { useCodeBuddyOAuth } from '@/composables/useCodeBuddyOAuth'
+import type { CodeBuddyTokenInfo } from '@/api/admin/codebuddy'
 import type {
   Proxy,
   AdminGroup,
@@ -4428,6 +4484,7 @@ const oauthStepTitle = computed(() => {
       : t('admin.accounts.oauth.kiro.title')
   }
   if (form.platform === 'grok') return t('admin.accounts.oauth.grok.title')
+  if (form.platform === 'codebuddy') return t('admin.accounts.oauth.codebuddy.title')
   return t('admin.accounts.oauth.title')
 })
 
@@ -4508,6 +4565,11 @@ const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
 const kiroOAuth = useKiroOAuth() // For Kiro OAuth / IDC
 const grokOAuth = useGrokOAuth() // For Grok OAuth
+const codeBuddyOAuth = useCodeBuddyOAuth() // For CodeBuddy OAuth
+// CodeBuddy：校验成功后暂存的 token（state 会话一次性，不能重复兑换），
+// “完成授权”时才用它创建账号。
+const codeBuddyTokenInfo = ref<CodeBuddyTokenInfo | null>(null)
+const codeBuddyVerified = computed(() => !!codeBuddyTokenInfo.value)
 
 // Computed: current OAuth state for template binding
 const currentAuthUrl = computed(() => {
@@ -4516,6 +4578,7 @@ const currentAuthUrl = computed(() => {
   if (form.platform === 'antigravity') return antigravityOAuth.authUrl.value
   if (form.platform === 'kiro') return kiroOAuth.authUrl.value
   if (form.platform === 'grok') return grokOAuth.authUrl.value
+  if (form.platform === 'codebuddy') return codeBuddyOAuth.authUrl.value
   return oauth.authUrl.value
 })
 
@@ -4525,6 +4588,7 @@ const currentSessionId = computed(() => {
   if (form.platform === 'antigravity') return antigravityOAuth.sessionId.value
   if (form.platform === 'kiro') return kiroOAuth.sessionId.value
   if (form.platform === 'grok') return grokOAuth.sessionId.value
+  if (form.platform === 'codebuddy') return codeBuddyOAuth.sessionId.value
   return oauth.sessionId.value
 })
 
@@ -4534,6 +4598,7 @@ const currentOAuthLoading = computed(() => {
   if (form.platform === 'antigravity') return antigravityOAuth.loading.value
   if (form.platform === 'kiro') return kiroOAuth.loading.value
   if (form.platform === 'grok') return grokOAuth.loading.value
+  if (form.platform === 'codebuddy') return codeBuddyOAuth.loading.value
   return oauth.loading.value
 })
 
@@ -4543,8 +4608,12 @@ const currentOAuthError = computed(() => {
   if (form.platform === 'antigravity') return antigravityOAuth.error.value
   if (form.platform === 'kiro') return kiroOAuth.error.value
   if (form.platform === 'grok') return grokOAuth.error.value
+  if (form.platform === 'codebuddy') return codeBuddyOAuth.error.value
   return oauth.error.value
 })
+
+// CodeBuddy 交换状态所需的 OAuth state（与 OAuthAuthorizationFlow 同步）
+const currentOAuthState = computed(() => codeBuddyOAuth.state.value)
 
 // Refs
 const oauthFlowRef = ref<OAuthFlowExposed | null>(null)
@@ -5193,6 +5262,10 @@ const expiresAtInput = computed({
 
 const canExchangeCode = computed(() => {
   const authCode = oauthFlowRef.value?.authCode || ''
+  if (form.platform === 'codebuddy') {
+    // CodeBuddy 无授权码输入：完成授权仅在“校验认证状态”成功后可用。
+    return codeBuddyVerified.value && !codeBuddyOAuth.loading.value
+  }
   if (form.platform === 'openai') {
     return authCode.trim() && openaiOAuth.sessionId.value && !openaiOAuth.loading.value
   }
@@ -5917,6 +5990,8 @@ const resetForm = () => {
   antigravityOAuth.resetState()
   kiroOAuth.resetState()
   grokOAuth.resetState()
+  codeBuddyOAuth.resetState()
+  codeBuddyTokenInfo.value = null
   oauthFlowRef.value?.reset()
   antigravityMixedChannelConfirmed.value = false
   upstreamModelsPreviewed.value = false
@@ -6464,6 +6539,8 @@ const goBackToBasicInfo = () => {
   antigravityOAuth.resetState()
   kiroOAuth.resetState()
   grokOAuth.resetState()
+  codeBuddyOAuth.resetState()
+  codeBuddyTokenInfo.value = null
   oauthFlowRef.value?.reset()
 }
 
@@ -6496,6 +6573,9 @@ const handleGenerateUrl = async () => {
     }
   } else if (form.platform === 'grok') {
     await grokOAuth.generateAuthUrl(form.proxy_id)
+  } else if (form.platform === 'codebuddy') {
+    codeBuddyTokenInfo.value = null
+    await codeBuddyOAuth.generateAuthUrl(form.proxy_id)
   } else {
     await oauth.generateAuthUrl(addMethod.value, form.proxy_id)
   }
@@ -6508,6 +6588,8 @@ const handleValidateRefreshToken = (rt: string) => {
     handleAntigravityValidateRT(rt)
   } else if (form.platform === 'grok') {
     handleGrokValidateRT(rt)
+  } else if (form.platform === 'codebuddy') {
+    handleCodeBuddyValidateRT(rt)
   }
 }
 
@@ -6581,6 +6663,14 @@ const createAccountAndFinish = async (
     if (!credentials.base_url) {
       credentials.base_url = apiKeyBaseUrl.value.trim() || 'https://api.x.ai/v1'
     }
+    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    } else {
+      delete credentials.model_mapping
+    }
+  }
+  if (platform === 'codebuddy') {
     const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
     if (modelMapping) {
       credentials.model_mapping = modelMapping
@@ -7268,6 +7358,135 @@ const handleOpenAIValidateRT = (rt: string) => handleOpenAIBatchRT(rt)
 // 手动输入 Mobile RT
 const handleOpenAIValidateMobileRT = (rt: string) => handleOpenAIBatchRT(rt, OPENAI_MOBILE_RT_CLIENT_ID)
 
+// CodeBuddy：校验认证状态（用 state 换 token）。成功后暂存 token 并解锁“完成授权”；
+// 失败可重复点击重试。
+const handleVerifyAuthState = async (state: string) => {
+  const stateToUse = (state || '').trim() || codeBuddyOAuth.state.value.trim()
+  if (!stateToUse || !codeBuddyOAuth.sessionId.value) return
+
+  codeBuddyOAuth.loading.value = true
+  codeBuddyOAuth.error.value = ''
+
+  try {
+    const tokenInfo = await codeBuddyOAuth.exchangeState({
+      state: stateToUse,
+      sessionId: codeBuddyOAuth.sessionId.value,
+      proxyId: form.proxy_id
+    })
+    if (!tokenInfo) return
+
+    codeBuddyTokenInfo.value = tokenInfo
+    appStore.showSuccess(t('admin.accounts.oauth.codebuddy.verifyAuthStateSuccess'))
+  } catch (error: any) {
+    codeBuddyOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.codebuddy.authFailed')
+    appStore.showError(codeBuddyOAuth.error.value)
+  } finally {
+    codeBuddyOAuth.loading.value = false
+  }
+}
+
+// CodeBuddy：完成授权（仅在“校验认证状态”成功后可用），用暂存的 token 创建账号。
+const handleCodeBuddyCompleteAuth = async () => {
+  const tokenInfo = codeBuddyTokenInfo.value
+  if (!tokenInfo) return
+
+  const credentials = codeBuddyOAuth.buildCredentials(tokenInfo)
+  const extra = codeBuddyOAuth.buildExtraInfo(tokenInfo)
+  await createAccountAndFinish('codebuddy', 'oauth', credentials, extra)
+}
+
+const handleCodeBuddyValidateRT = async (refreshTokenInput: string) => {
+  if (!refreshTokenInput.trim()) return
+
+  const refreshTokens = refreshTokenInput
+    .split('\n')
+    .map((rt) => rt.trim())
+    .filter((rt) => rt)
+
+  if (refreshTokens.length === 0) {
+    codeBuddyOAuth.error.value = t('admin.accounts.oauth.codebuddy.pleaseEnterRefreshToken')
+    return
+  }
+
+  codeBuddyOAuth.loading.value = true
+  codeBuddyOAuth.error.value = ''
+
+  let successCount = 0
+  let failedCount = 0
+  const errors: string[] = []
+
+  try {
+    for (let i = 0; i < refreshTokens.length; i++) {
+      try {
+        const tokenInfo = await codeBuddyOAuth.validateRefreshToken(refreshTokens[i], form.proxy_id)
+        if (!tokenInfo) {
+          failedCount++
+          errors.push(`#${i + 1}: ${codeBuddyOAuth.error.value || 'Validation failed'}`)
+          codeBuddyOAuth.error.value = ''
+          continue
+        }
+
+        const credentials = codeBuddyOAuth.buildCredentials(tokenInfo)
+        const extra = codeBuddyOAuth.buildExtraInfo(tokenInfo)
+        const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+        if (modelMapping) {
+          credentials.model_mapping = modelMapping
+        }
+
+        if (!applyTempUnschedConfig(credentials)) {
+          return
+        }
+
+        const accountName =
+          refreshTokens.length > 1
+            ? `${form.name || 'CodeBuddy/WorkBuddy Account'} #${i + 1}`
+            : (form.name || 'CodeBuddy/WorkBuddy Account')
+
+        await adminAPI.accounts.create({
+          name: accountName,
+          notes: form.notes,
+          platform: 'codebuddy',
+          type: 'oauth',
+          credentials,
+          extra,
+          proxy_id: form.proxy_id,
+          concurrency: form.concurrency,
+          load_factor: form.load_factor ?? undefined,
+          priority: form.priority,
+          rate_multiplier: form.rate_multiplier,
+          group_ids: form.group_ids,
+          expires_at: form.expires_at,
+          auto_pause_on_expired: autoPauseOnExpired.value
+        })
+        successCount++
+      } catch (error: any) {
+        failedCount++
+        const errMsg = error.response?.data?.detail || error.message || 'Unknown error'
+        errors.push(`#${i + 1}: ${errMsg}`)
+      }
+    }
+
+    if (successCount > 0 && failedCount === 0) {
+      appStore.showSuccess(
+        refreshTokens.length > 1
+          ? t('admin.accounts.oauth.batchSuccess', { count: successCount })
+          : t('admin.accounts.accountCreated')
+      )
+      emit('created')
+      handleClose()
+    } else if (successCount > 0) {
+      appStore.showWarning(t('admin.accounts.oauth.batchPartialSuccess', { success: successCount, failed: failedCount }))
+      codeBuddyOAuth.error.value = errors.join('\n')
+      emit('created')
+    } else {
+      codeBuddyOAuth.error.value = errors.join('\n')
+      appStore.showError(t('admin.accounts.oauth.batchFailed'))
+    }
+  } finally {
+    codeBuddyOAuth.loading.value = false
+  }
+}
+
 // Antigravity 手动 RT 批量验证和创建
 const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
   if (!refreshTokenInput.trim()) return
@@ -7628,6 +7847,8 @@ const handleExchangeCode = async () => {
       return handleAntigravityExchange(authCode)
     case 'grok':
       return handleGrokExchange(authCode)
+    case 'codebuddy':
+      return handleCodeBuddyCompleteAuth()
     default:
       return handleAnthropicExchange(authCode)
   }

@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/codebuddy"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
@@ -1137,28 +1138,51 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID)
 		if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
 			availableModels = filterModelsByCustomList(availableModels, defaultModelIDsForPlatform(service.PlatformComposite), apiKey.Group.ModelsListConfig.Models)
+			availableModels = filterModelsByKeyWhitelist(availableModels, apiKey)
 			writeCustomModelsList(c, service.PlatformComposite, availableModels)
 			return
 		}
+		availableModels = filterModelsByKeyWhitelist(availableModels, apiKey)
 		if len(availableModels) > 0 {
 			writeModelsList(c, service.PlatformComposite, availableModels)
 			return
 		}
-		writeModelsList(c, service.PlatformComposite, defaultModelIDsForPlatform(service.PlatformComposite))
+		writeModelsList(c, service.PlatformComposite, filterModelsByKeyWhitelist(defaultModelIDsForPlatform(service.PlatformComposite), apiKey))
 		return
 	}
 
 	// Get available models from account configurations for the selected group platform.
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+		// CodeBuddy：自定义列表是管理员显式挑选的展示列表，且请求侧模型名原样透传、
+		// 不依赖账号静态 model_mapping；候选列表来自实时 /v3/config，可能与静态
+		// credentials["models"] 不一致，交集过滤会误杀新勾选的模型。故直接生效。
+		if platform == service.PlatformCodeBuddy {
+			models := append([]string(nil), apiKey.Group.ModelsListConfig.Models...)
+			models = filterModelsByKeyWhitelist(models, apiKey)
+			writeCustomModelsList(c, platform, models)
+			return
+		}
 		fallbackModels := defaultModelIDsForPlatform(platform)
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
+		availableModels = filterModelsByKeyWhitelist(availableModels, apiKey)
 		writeCustomModelsList(c, platform, availableModels)
 		return
 	}
 
+	// Key 级模型白名单：过滤展示列表，与请求侧 RequireAllowedModels 校验一致。
+	availableModels = filterModelsByKeyWhitelist(availableModels, apiKey)
+
 	if len(availableModels) > 0 {
 		writeModelsList(c, platform, availableModels)
+		return
+	}
+
+	// Key 配置了白名单时，平台默认回落列表也按白名单过滤，
+	// 避免展示 Key 实际不可用的模型。
+	defaultFallback := filterModelsByKeyWhitelist(defaultModelIDsForPlatform(platform), apiKey)
+	if len(defaultFallback) > 0 {
+		writeModelsList(c, platform, defaultFallback)
 		return
 	}
 
@@ -1250,6 +1274,11 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 	fallbackModels := defaultCodexModelIDsForPlatform(platform)
 	if group.CustomModelsListEnabled() {
+		// CodeBuddy：自定义列表直接生效（同 Models，见上方说明），避免与静态
+		// 可用源求交集时误杀实时新增的模型。
+		if platform == service.PlatformCodeBuddy {
+			return append([]string(nil), group.ModelsListConfig.Models...)
+		}
 		return filterModelsByCustomList(
 			customModelsListSource(platform, availableModels, fallbackModels),
 			fallbackModels,
@@ -1524,6 +1553,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return claude.DefaultModelIDs()
 	case service.PlatformGrok:
 		return xai.DefaultModelIDs()
+	case service.PlatformCodeBuddy:
+		return codebuddy.DefaultModels()
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})

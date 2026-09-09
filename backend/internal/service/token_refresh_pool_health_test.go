@@ -367,7 +367,7 @@ func newPoolHealthService(repo *poolHealthAccountRepo, refresher *poolHealthRefr
 
 func TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource(t *testing.T) {
 	cfg := &config.Config{}
-	svc := NewTokenRefreshService(nil, nil, nil, nil, nil, nil, nil, nil, cfg, nil)
+	svc := NewTokenRefreshService(nil, nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 
 	require.Equal(t, []string{
 		PlatformAnthropic,
@@ -376,8 +376,9 @@ func TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource(t *testi
 		PlatformAntigravity,
 		PlatformKiro,
 		PlatformGrok,
+		PlatformCodeBuddy,
 	}, svc.eligiblePlatforms())
-	require.Len(t, svc.registrations, 6)
+	require.Len(t, svc.registrations, 7)
 	for _, registration := range svc.registrations {
 		require.NotNil(t, registration.refresher)
 		require.NotNil(t, registration.executor)

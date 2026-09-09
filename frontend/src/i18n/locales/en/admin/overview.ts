@@ -960,6 +960,7 @@ export default {
         zhipu: 'Zhipu GLM',
         deepseek: 'DeepSeek',
         composite: 'Composite',
+        codebuddy: 'CodeBuddy',
       },
       kiroCache: {
         description: 'Simulate Anthropic prompt cache usage for this Kiro group only.',

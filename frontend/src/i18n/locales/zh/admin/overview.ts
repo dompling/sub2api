@@ -893,6 +893,7 @@ export default {
         zhipu: 'Zhipu GLM',
         deepseek: 'DeepSeek',
         composite: 'Composite',
+        codebuddy: 'CodeBuddy',
       },
       kiroCache: {
         description: '仅对当前 Kiro 分组模拟 Anthropic Prompt Cache 用量。',

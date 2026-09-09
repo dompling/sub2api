@@ -199,8 +199,8 @@ func (s *GatewayService) resolveCompositeRouteDecision(ctx context.Context, grou
 // 推断不出 kiro，因为 kiro 的模型名是 claude-* / gpt-*，与 anthropic/openai 冲突。
 func isConcreteRequestPlatform(platform string) bool {
 	switch platform {
-	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformKiro, PlatformGrok,
-		PlatformKimi, PlatformZhipu, PlatformDeepseek:
+	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformKimi,
+		PlatformZhipu, PlatformDeepseek, PlatformCodeBuddy:
 		return true
 	default:
 		return false

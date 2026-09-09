@@ -361,9 +361,12 @@
         :show-project-id="isGemini && geminiOAuthType === 'code_assist'"
         :is-kiro-external-idp="isKiro && kiroAccountType === 'external_idp'"
         :external-idp-stage="kiroOAuth.externalIdpStage.value"
+        :initial-oauth-state="codeBuddyOAuth.state.value"
+        :state-verified="isCodeBuddy && codeBuddyVerified"
         :initial-input-method="grokInitialInputMethod"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
+        @verify-auth-state="handleVerifyAuthState"
         @validate-refresh-token="handleValidateRefreshToken"
         @import-sso="handleGrokImportSSO"
       />
@@ -427,22 +430,24 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
+import {
+  useAccountOAuth,
+  type AddMethod,
+  type AuthInputMethod
+} from '@/composables/useAccountOAuth'
+import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
+import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
+import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
+import { useGrokOAuth } from '@/composables/useGrokOAuth'
+import { useKiroOAuth } from '@/composables/useKiroOAuth'
+import { useCodeBuddyOAuth } from '@/composables/useCodeBuddyOAuth'
+import type { CodeBuddyTokenInfo } from '@/api/admin/codebuddy'
+import type { Account, AccountPlatform } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OAuthAuthorizationFlow from '@/components/account/OAuthAuthorizationFlow.vue'
-import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
-import {
-  type AddMethod,
-  type AuthInputMethod,
-  useAccountOAuth
-} from '@/composables/useAccountOAuth'
-import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
-import { useKiroOAuth } from '@/composables/useKiroOAuth'
-import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useAppStore } from '@/stores/app'
-import type { Account, AccountPlatform } from '@/types'
-import { useGrokOAuth } from '@/composables/useGrokOAuth'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
 
 interface OAuthFlowExposed {
@@ -476,6 +481,11 @@ const geminiOAuth = useGeminiOAuth()
 const antigravityOAuth = useAntigravityOAuth()
 const kiroOAuth = useKiroOAuth()
 const grokOAuth = useGrokOAuth()
+const codeBuddyOAuth = useCodeBuddyOAuth()
+// CodeBuddy：校验成功后暂存的 token（state 会话一次性，不能重复兑换），
+// “完成授权”时才用它更新账号凭证。
+const codeBuddyTokenInfo = ref<CodeBuddyTokenInfo | null>(null)
+const codeBuddyVerified = computed(() => !!codeBuddyTokenInfo.value)
 
 const oauthFlowRef = ref<OAuthFlowExposed | null>(null)
 
@@ -510,6 +520,7 @@ const isAnthropic = computed(() => props.account?.platform === 'anthropic')
 const isAntigravity = computed(() => props.account?.platform === 'antigravity')
 const isKiro = computed(() => props.account?.platform === 'kiro')
 const isGrok = computed(() => props.account?.platform === 'grok')
+const isCodeBuddy = computed(() => props.account?.platform === 'codebuddy')
 
 const oauthPlatform = computed<AccountPlatform>(() => {
   if (isOpenAI.value) return 'openai'
@@ -517,6 +528,7 @@ const oauthPlatform = computed<AccountPlatform>(() => {
   if (isKiro.value) return 'kiro'
   if (isAntigravity.value) return 'antigravity'
   if (isGrok.value) return 'grok'
+  if (isCodeBuddy.value) return 'codebuddy'
   return 'anthropic'
 })
 
@@ -542,6 +554,7 @@ const currentAuthUrl = computed(() => {
   if (isKiro.value) return kiroOAuth.authUrl.value
   if (isAntigravity.value) return antigravityOAuth.authUrl.value
   if (isGrok.value) return grokOAuth.authUrl.value
+  if (isCodeBuddy.value) return codeBuddyOAuth.authUrl.value
   return claudeOAuth.authUrl.value
 })
 
@@ -551,6 +564,7 @@ const currentSessionId = computed(() => {
   if (isKiro.value) return kiroOAuth.sessionId.value
   if (isAntigravity.value) return antigravityOAuth.sessionId.value
   if (isGrok.value) return grokOAuth.sessionId.value
+  if (isCodeBuddy.value) return codeBuddyOAuth.sessionId.value
   return claudeOAuth.sessionId.value
 })
 
@@ -560,6 +574,7 @@ const currentLoading = computed(() => {
   if (isKiro.value) return kiroOAuth.loading.value
   if (isAntigravity.value) return antigravityOAuth.loading.value
   if (isGrok.value) return grokOAuth.loading.value
+  if (isCodeBuddy.value) return codeBuddyOAuth.loading.value
   return claudeOAuth.loading.value
 })
 
@@ -569,6 +584,7 @@ const currentError = computed(() => {
   if (isKiro.value) return kiroOAuth.error.value
   if (isAntigravity.value) return antigravityOAuth.error.value
   if (isGrok.value) return grokOAuth.error.value
+  if (isCodeBuddy.value) return codeBuddyOAuth.error.value
   return claudeOAuth.error.value
 })
 
@@ -580,13 +596,14 @@ const isManualInputMethod = computed(() => {
   if (method === 'sso_cookie' || method === 'email_password' || method === 'refresh_token') {
     return false
   }
-  // OpenAI/Gemini/Kiro/Antigravity/Grok use manual code paste by default (no cookie auth)
+  // OpenAI/Gemini/Kiro/Antigravity/Grok/CodeBuddy use manual code paste by default (no cookie auth)
   return (
     isOpenAILike.value ||
     isGemini.value ||
     isKiro.value ||
     isAntigravity.value ||
     isGrok.value ||
+    isCodeBuddy.value ||
     method === 'manual'
   )
 })
@@ -594,6 +611,11 @@ const isManualInputMethod = computed(() => {
 const canExchangeCode = computed(() => {
   if (isKiroImportMode.value) {
     return false
+  }
+
+  if (isCodeBuddy.value) {
+    // 完成授权仅在“校验认证状态”成功后可用。
+    return codeBuddyVerified.value && !codeBuddyOAuth.loading.value
   }
   const authCode = oauthFlowRef.value?.authCode || ''
   return !!(authCode.trim() && currentSessionId.value && !currentLoading.value)
@@ -675,6 +697,8 @@ const resetState = () => {
   antigravityOAuth.resetState()
   kiroOAuth.resetState()
   grokOAuth.resetState()
+  codeBuddyOAuth.resetState()
+  codeBuddyTokenInfo.value = null
   oauthFlowRef.value?.reset()
 }
 
@@ -774,11 +798,75 @@ const handleGenerateUrl = async () => {
     return
   }
 
+  if (isCodeBuddy.value) {
+    codeBuddyTokenInfo.value = null
+    await codeBuddyOAuth.generateAuthUrl(props.account.proxy_id)
+    return
+  }
+
   await claudeOAuth.generateAuthUrl(addMethod.value, props.account.proxy_id)
+}
+
+// CodeBuddy：校验认证状态（用 state 换 token）。成功后暂存 token 并解锁“完成授权”；
+// 失败可重复点击重试。
+const handleVerifyAuthState = async (state: string) => {
+  if (!props.account) return
+  const stateToUse = (state || '').trim() || codeBuddyOAuth.state.value.trim()
+  if (!stateToUse || !codeBuddyOAuth.sessionId.value) return
+
+  codeBuddyOAuth.loading.value = true
+  codeBuddyOAuth.error.value = ''
+
+  try {
+    const tokenInfo = await codeBuddyOAuth.exchangeState({
+      state: stateToUse,
+      sessionId: codeBuddyOAuth.sessionId.value,
+      proxyId: props.account.proxy_id
+    })
+    if (!tokenInfo) return
+
+    codeBuddyTokenInfo.value = tokenInfo
+    appStore.showSuccess(t('admin.accounts.oauth.codebuddy.verifyAuthStateSuccess'))
+  } catch (error: any) {
+    codeBuddyOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.codebuddy.authFailed')
+    appStore.showError(codeBuddyOAuth.error.value)
+  } finally {
+    codeBuddyOAuth.loading.value = false
+  }
 }
 
 const handleExchangeCode = async () => {
   if (!props.account) return
+
+  // CodeBuddy 完成授权：用“校验认证状态”阶段换取的 token 更新账号凭证
+  // （state 会话一次性，不能重复兑换）。
+  if (isCodeBuddy.value) {
+    const tokenInfo = codeBuddyTokenInfo.value
+    if (!tokenInfo) return
+
+    codeBuddyOAuth.loading.value = true
+    codeBuddyOAuth.error.value = ''
+
+    try {
+      const credentials = codeBuddyOAuth.buildCredentials(tokenInfo)
+      const extra = codeBuddyOAuth.buildExtraInfo(tokenInfo)
+      await adminAPI.accounts.update(props.account.id, {
+        type: 'oauth',
+        credentials,
+        extra
+      })
+      const updatedAccount = await adminAPI.accounts.clearError(props.account.id)
+      appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+      emit('reauthorized', updatedAccount)
+      handleClose()
+    } catch (error: any) {
+      codeBuddyOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.codebuddy.authFailed')
+      appStore.showError(codeBuddyOAuth.error.value)
+    } finally {
+      codeBuddyOAuth.loading.value = false
+    }
+    return
+  }
 
   const authCode = oauthFlowRef.value?.authCode || ''
   if (!authCode.trim()) return

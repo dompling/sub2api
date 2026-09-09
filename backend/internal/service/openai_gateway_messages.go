@@ -52,6 +52,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
 	}
 
+	// 入口分流：CodeBuddy 上游仅支持 OpenAI Chat Completions 协议（/v2/chat/completions），
+	// 不支持 Responses/Claude，直接走 Anthropic→ChatCompletions 直转。
+	if account.Platform == PlatformCodeBuddy {
+		return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+	}
 	// 固定 chat_completions 的 CN 账号，以及不支持 Responses 的其他 APIKey
 	// 账号，均将 Messages 转为 CC；固定 responses 的 CN 账号不受探针旧值覆盖。
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {

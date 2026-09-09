@@ -47,10 +47,11 @@ const (
 	PlatformKimi      = domain.PlatformKimi
 	PlatformZhipu     = domain.PlatformZhipu
 	PlatformDeepseek  = domain.PlatformDeepseek
+	PlatformComposite = domain.PlatformComposite
+	PlatformCodeBuddy = domain.PlatformCodeBuddy
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
-	PlatformKiro        = domain.PlatformKiro
-	PlatformComposite   = domain.PlatformComposite
+	PlatformKiro = domain.PlatformKiro
 )
 
 // 账号接入模式（国产供应商）：按量付费 vs Coding Plan。
@@ -109,6 +110,7 @@ var AllowedQuotaPlatforms = []string{
 	PlatformKimi,
 	PlatformZhipu,
 	PlatformDeepseek,
+	PlatformCodeBuddy,
 }
 
 // AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。
