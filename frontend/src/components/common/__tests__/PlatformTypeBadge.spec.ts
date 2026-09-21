@@ -11,6 +11,15 @@ vi.mock('vue-i18n', async () => {
 })
 
 describe('PlatformTypeBadge', () => {
+  it('keeps the CodeBuddy/WorkBuddy label when using shared platform labels', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: { platform: 'codebuddy', type: 'oauth' }
+    })
+
+    expect(wrapper.text()).toContain('CodeBuddy/WorkBuddy')
+    expect(wrapper.find('[data-testid="platform-telemetry-badge"]').exists()).toBe(false)
+  })
+
   it('uses Kiro theme instead of Anthropic orange theme', () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {
@@ -23,5 +32,32 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.html()).toContain('bg-violet-100')
     expect(wrapper.html()).toContain('text-violet-700')
     expect(wrapper.html()).not.toContain('bg-orange-100')
+  })
+
+  it('shows an English Telemetry badge when enabled', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'oauth',
+        planType: 'pro',
+        telemetryEnabled: true
+      }
+    })
+
+    expect(wrapper.get('[data-testid="platform-telemetry-badge"]').text()).toBe('Telemetry')
+    expect(wrapper.text()).toContain('Pro 20x')
+    expect(wrapper.text()).not.toMatch(/抗降智/)
+  })
+
+  it('hides the Telemetry badge when the switch is off', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'oauth',
+        planType: 'plus'
+      }
+    })
+
+    expect(wrapper.find('[data-testid="platform-telemetry-badge"]').exists()).toBe(false)
   })
 })

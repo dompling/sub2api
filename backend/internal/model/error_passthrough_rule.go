@@ -42,9 +42,12 @@ const (
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformKiro        = domain.PlatformKiro
 	PlatformGrok        = domain.PlatformGrok
+	PlatformAdobe       = domain.PlatformAdobe
 	PlatformKimi        = domain.PlatformKimi
 	PlatformZhipu       = domain.PlatformZhipu
 	PlatformDeepseek    = domain.PlatformDeepseek
+	PlatformMiniMax     = domain.PlatformMiniMax
+	PlatformOpenCodeGo  = domain.PlatformOpenCodeGo
 	PlatformCodeBuddy   = domain.PlatformCodeBuddy
 )
 
@@ -57,9 +60,12 @@ func AllPlatforms() []string {
 		PlatformAntigravity,
 		PlatformKiro,
 		PlatformGrok,
+		PlatformAdobe,
 		PlatformKimi,
 		PlatformZhipu,
 		PlatformDeepseek,
+		PlatformMiniMax,
+		PlatformOpenCodeGo,
 		PlatformCodeBuddy,
 	}
 }

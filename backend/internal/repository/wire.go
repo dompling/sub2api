@@ -98,6 +98,7 @@ var ProviderSet = wire.NewSet(
 	NewPromptRuleRepository,
 	NewTLSFingerprintProfileRepository,
 	NewPluginRepository,
+	NewPluginKVStore,
 	NewChannelRepository,
 	NewChannelMonitorRepository,
 	NewChannelMonitorV2Repository,
@@ -139,6 +140,7 @@ var ProviderSet = wire.NewSet(
 	NewErrorPassthroughCache,
 	NewPromptRuleCache,
 	NewTLSFingerprintProfileCache,
+	NewChannelCache,
 	NewContentModerationHashCache,
 
 	// Encryptors

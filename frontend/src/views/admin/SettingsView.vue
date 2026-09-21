@@ -1174,6 +1174,7 @@
                           | 'all'
                           | 'priority'
                           | 'flex'
+                          | 'missing'
                       "
                       :options="openaiFastPolicyTierOptions"
                     />
@@ -5749,6 +5750,132 @@
                 <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
               </div>
 
+              <!-- Codex 292 门票打票 -->
+              <div class="flex items-center justify-between gap-4">
+                <div class="min-w-0">
+                  <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketEnabled") }}
+                  </h3>
+                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketEnabledDesc") }}
+                  </p>
+                </div>
+                <Toggle
+                  id="codex-ticket-enabled"
+                  v-model="form.openai_codex_ticket_enabled"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <div class="min-w-0">
+                  <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketFailClosed") }}
+                  </h3>
+                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketFailClosedDesc") }}
+                  </p>
+                </div>
+                <Toggle
+                  id="codex-ticket-fail-closed"
+                  v-model="form.openai_codex_ticket_fail_closed"
+                />
+              </div>
+              <div>
+                <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxy") }}
+                </h3>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc") }}
+                </p>
+                <input
+                  id="codex-ticket-harvest-proxy"
+                  v-model="form.openai_codex_ticket_harvest_proxy_url"
+                  type="text"
+                  class="input mt-3 w-full font-mono text-sm"
+                  :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
+                  autocomplete="off"
+                />
+                <p
+                  v-if="form.openai_codex_ticket_harvest_proxy_configured"
+                  class="mt-1.5 text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyConfigured") }}
+                </p>
+              </div>
+              <div>
+                <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketDefaultLength") }}
+                </h3>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketDefaultLengthDesc") }}
+                </p>
+                <input
+                  id="codex-ticket-default-length"
+                  v-model.number="form.openai_codex_ticket_default_length"
+                  type="number"
+                  min="100"
+                  max="512"
+                  class="input mt-3 w-40 font-mono text-sm"
+                />
+              </div>
+              <div>
+                <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketPlanLengths") }}
+                </h3>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketPlanLengthsDesc") }}
+                </p>
+                <div class="mt-3 space-y-2">
+                  <div
+                    v-for="(rule, index) in form.openai_codex_ticket_plan_lengths"
+                    :key="index"
+                    data-test="codex-ticket-plan-row"
+                    class="flex items-center gap-2"
+                  >
+                    <Select
+                      :id="index === 0 ? 'codex-ticket-plan-rule-plan' : undefined"
+                      v-model="rule.plan"
+                      :options="codexTicketPlanOptions"
+                      searchable
+                      creatable
+                      creatable-label-mode="raw"
+                      class="w-48 flex-shrink-0"
+                      :placeholder="t('admin.settings.gatewayForwarding.codexTicketPlanRulePlaceholder')"
+                    />
+                    <input
+                      v-model.number="rule.length"
+                      type="number"
+                      min="100"
+                      max="512"
+                      class="input w-28 font-mono text-sm"
+                      :placeholder="t('admin.settings.gatewayForwarding.codexTicketDefaultLength')"
+                    />
+                    <button
+                      type="button"
+                      class="btn-ghost-danger text-xs"
+                      :title="t('admin.settings.gatewayForwarding.codexTicketPlanRuleRemove')"
+                      @click="form.openai_codex_ticket_plan_lengths.splice(index, 1)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <button
+                    id="codex-ticket-plan-rule-add"
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    @click="form.openai_codex_ticket_plan_lengths.push({ plan: '', length: form.openai_codex_ticket_default_length || 292 })"
+                  >
+                    <Icon name="plus" size="xs" />
+                    {{ t("admin.settings.gatewayForwarding.codexTicketPlanRuleAdd") }}
+                  </button>
+                  <p
+                    v-if="form.openai_codex_ticket_plan_lengths.length === 0"
+                    class="text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.gatewayForwarding.codexTicketPlanLengthsEmpty") }}
+                  </p>
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -6732,6 +6859,17 @@
                     />
                   </div>
 
+                  <label class="flex items-center gap-2 sm:col-span-2">
+                    <input
+                      v-model="item.hide_open_button"
+                      type="checkbox"
+                      data-testid="custom-menu-hide-open-button"
+                    />
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.customMenu.hideOpenButton") }}
+                    </span>
+                  </label>
+
                   <!-- SVG Icon (full width) -->
                   <div class="sm:col-span-2">
                     <label
@@ -7073,16 +7211,29 @@
                 </p>
               </div>
 
-              <div v-if="form.channel_monitor_mode === 'v2'" class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
-                    {{ t('admin.settings.features.channelMonitor.hideThroughput') }}
-                  </p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.settings.features.channelMonitor.hideThroughputHint') }}
-                  </p>
+              <div v-if="form.channel_monitor_mode === 'v2'" class="space-y-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t('admin.settings.features.channelMonitor.hideThroughput') }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.channelMonitor.hideThroughputHint') }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_throughput" />
                 </div>
-                <Toggle v-model="form.channel_monitor_hide_throughput" />
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t('admin.settings.features.channelMonitor.hideUserRanking') }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.channelMonitor.hideUserRankingHint') }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_user_ranking" />
+                </div>
               </div>
 
               <div v-if="form.channel_monitor_mode === 'v1'" class="flex items-start justify-between gap-4">
@@ -7179,6 +7330,36 @@
                 rows="6"
                 class="input font-mono text-sm"
               ></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.siteBillingMode.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.siteBillingMode.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div class="min-w-0">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.siteBillingMode.label') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ siteBillingModeHint }}
+                </p>
+              </div>
+              <div class="w-full shrink-0 sm:w-56">
+                <Select
+                  :modelValue="siteBillingMode"
+                  :options="siteBillingModeOptions"
+                  @update:modelValue="siteBillingMode = $event as SiteBillingMode"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -8779,6 +8960,7 @@ import type {
   AuthSourceType,
   SystemSettings,
   UpdateSettingsRequest,
+  CodexTicketPlanLengthRule,
   DefaultSubscriptionSetting,
   DefaultPlatformQuotasMap,
   OpenAIFastPolicyRule,
@@ -8796,7 +8978,14 @@ import type {
 import type { ProviderInstance } from "@/types/payment";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import Icon from "@/components/icons/Icon.vue";
-import Select from "@/components/common/Select.vue";
+import Select, { type SelectOption } from "@/components/common/Select.vue";
+import {
+  SITE_BILLING_MODES,
+  SITE_BILLING_MODE_I18N_KEYS,
+  billingModeToSettings,
+  resolveSiteBillingMode,
+  type SiteBillingMode,
+} from "@/utils/siteBillingMode";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PaymentProviderList from "@/components/payment/PaymentProviderList.vue";
 import PaymentProviderDialog from "@/components/payment/PaymentProviderDialog.vue";
@@ -8834,6 +9023,7 @@ import {
   type FingerprintSignalType,
   type FingerprintSignalRow,
 } from "./codexFingerprintSignals";
+import { openAIPlanTypeLabel } from "@/utils/planType";
 
 const { t, locale } = useI18n();
 
@@ -8859,6 +9049,16 @@ const oidcTokenAuthMethodOptions = [
   { value: "client_secret_basic", label: "client_secret_basic" },
   { value: "none", label: "none" },
 ];
+// Codex 门票档位规则的 plan 预设：value 即后端做子串匹配的 canonical plan_type，
+// 标签复用 ChatGPT 档位命名；预设外的子串（如 business）通过 Select 的 creatable 输入。
+const codexTicketPlanOptions: SelectOption[] = [
+  "plus",
+  "pro",
+  "prolite",
+  "team",
+  "self_serve_business_prolite",
+  "free",
+].map((value) => ({ value, label: openAIPlanTypeLabel(value) || value }));
 const customMenuVisibilityOptions = computed(() => [
   { value: "user", label: t("admin.settings.customMenu.visibilityUser") },
   { value: "admin", label: t("admin.settings.customMenu.visibilityAdmin") },
@@ -9513,6 +9713,7 @@ type SettingsForm = Omit<
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
   channel_monitor_show_quota: boolean;
+  channel_monitor_hide_user_ranking: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   tencent_captcha_app_secret_key: string;
@@ -9533,6 +9734,8 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_low_upstream_rate_priority_enabled: boolean;
+  /** Form always binds a concrete rules array (SystemSettings marks this nullable). */
+  openai_codex_ticket_plan_lengths: CodexTicketPlanLengthRule[];
   openai_oauth_scheduling_rate_multiplier: number;
   openai_advanced_scheduler_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
@@ -9633,6 +9836,7 @@ const form = reactive<SettingsForm>({
     url: string;
     visibility: "user" | "admin";
     sort_order: number;
+    hide_open_button?: boolean;
   }>,
   custom_endpoints: [] as Array<{
     name: string;
@@ -9807,6 +10011,13 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
+  openai_codex_ticket_enabled: false,
+  openai_codex_ticket_fail_closed: true,
+  openai_codex_ticket_harvest_proxy_url: "",
+  openai_codex_ticket_harvest_proxy_configured: false,
+  openai_codex_ticket_default_length: 292,
+  // 档位规则直接在本数组里编辑，提交时规整（trim/小写、丢弃空 plan）后序列化进 payload
+  openai_codex_ticket_plan_lengths: [] as CodexTicketPlanLengthRule[],
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -9827,8 +10038,11 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   channel_monitor_hide_throughput: false,
   channel_monitor_show_quota: false,
+  channel_monitor_hide_user_ranking: false,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // Subscription feature switch (user sidebar "My Subscriptions" entry)
+  subscription_enabled: true,
   // Model Plaza feature switches + description
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
@@ -10840,6 +11054,9 @@ async function loadSettings() {
     form.channel_monitor_show_quota = Boolean(
       settings.channel_monitor_show_quota
     );
+    form.channel_monitor_hide_user_ranking = Boolean(
+      settings.channel_monitor_hide_user_ranking
+    );
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
     form.login_agreement_documents =
@@ -11039,6 +11256,24 @@ function findDuplicateDefaultSubscription(
     return false;
   });
 }
+
+// 站点类型：由 subscription_enabled 与 payment_balance_disabled 两个开关派生的单选，
+// 保存时同时写回两者，避免出现「既无充值也无订阅」的组合。
+const siteBillingModeOptions = computed<SelectOption[]>(() =>
+  SITE_BILLING_MODES.map((mode) => ({
+    value: mode,
+    label: t(`admin.settings.features.siteBillingMode.options.${SITE_BILLING_MODE_I18N_KEYS[mode]}`),
+  })),
+);
+const siteBillingMode = computed<SiteBillingMode>({
+  get: () => resolveSiteBillingMode(form),
+  set: (mode) => {
+    Object.assign(form, billingModeToSettings(mode));
+  },
+});
+const siteBillingModeHint = computed(() =>
+  t(`admin.settings.features.siteBillingMode.hints.${SITE_BILLING_MODE_I18N_KEYS[siteBillingMode.value]}`),
+);
 
 async function saveSettings() {
   saving.value = true;
@@ -11396,6 +11631,18 @@ async function saveSettings() {
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
+      openai_codex_ticket_enabled: form.openai_codex_ticket_enabled,
+      openai_codex_ticket_fail_closed: form.openai_codex_ticket_fail_closed,
+      openai_codex_ticket_harvest_proxy_url:
+        form.openai_codex_ticket_harvest_proxy_url?.trim() || "",
+      openai_codex_ticket_default_length:
+        form.openai_codex_ticket_default_length || 292,
+      openai_codex_ticket_plan_lengths: form.openai_codex_ticket_plan_lengths
+        .map((rule) => ({
+          plan: rule.plan.trim().toLowerCase(),
+          length: rule.length,
+        }))
+        .filter((rule) => rule.plan !== ""),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
@@ -11494,8 +11741,11 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       channel_monitor_hide_throughput: Boolean(form.channel_monitor_hide_throughput),
       channel_monitor_show_quota: Boolean(form.channel_monitor_show_quota),
+      channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // Subscription feature switch
+      subscription_enabled: form.subscription_enabled,
       // Model Plaza feature switches + description
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,
@@ -12128,7 +12378,12 @@ const openaiFastPolicyTierOptions = computed(() => [
     value: "priority",
     label: t("admin.settings.openaiFastPolicy.tierPriority"),
   },
+  {
+    value: "ultrafast",
+    label: t("admin.settings.openaiFastPolicy.tierUltrafast"),
+  },
   { value: "flex", label: t("admin.settings.openaiFastPolicy.tierFlex") },
+  { value: "missing", label: t("admin.settings.openaiFastPolicy.tierMissing") },
 ]);
 
 const openaiFastPolicyActionOptions = computed(() => [

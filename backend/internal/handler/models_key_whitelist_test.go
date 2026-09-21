@@ -5,6 +5,7 @@ package handler
 import (
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +52,7 @@ func TestFilterModelsByKeyWhitelist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key := &allowedModelsFilterKey{AllowedModels: tt.allowed}
+			key := &service.APIKey{AllowedModels: tt.allowed}
 			got := filterModelsByKeyWhitelist(tt.models, key)
 			require.Equal(t, tt.want, got)
 		})

@@ -31,7 +31,7 @@ func FetchEnabledModels(ctx context.Context, accessToken, userID, proxyURL strin
 }
 
 // FetchEnabledModelsFromBaseURL 与 FetchEnabledModels 相同，但允许指定上游基地址
-//（账号 credentials["base_url"] 自定义上游或测试注入）。
+// （账号 credentials["base_url"] 自定义上游或测试注入）。
 func FetchEnabledModelsFromBaseURL(ctx context.Context, baseURL, accessToken, userID, proxyURL string) ([]ModelInfo, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {

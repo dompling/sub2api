@@ -181,6 +181,19 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		require.True(t, isMigrationChecksumCompatible(name, released, edited))
 	})
 
+	// 从官方镜像切到 fork：db 记录官方版 checksum，文件是补了 kiro/adobe 的 fork 版。
+	t.Run("157/237/238官方版与fork版兼容", func(t *testing.T) {
+		for _, tc := range []struct{ name, official, fork string }{
+			{"157_user_platform_quotas_add_grok.sql", "5cace8fa32c6174a72721cd9b01f28f4545de1fd7bcd9ca196a4225056ec4fb8", "a918734da39c2e5a82e4a5e9511bac1f4cf7e310ceadd647df52692320633c1b"},
+			{"237_add_minimax_platform.sql", "f4c73d2dbce114ca7ade1aac51998c3465490f4f3c9b3e868e53590f3fa8601b", "c754b29e15c10ef2a72887c4e2dd04a73a37c6c06218d1b2725836884450c03a"},
+			{"238_opencode_go_platform.sql", "6f987e251519bd3759e60da44620a5d777494cceb333b6ce394aa0ea536ef5a2", "d310f134e119bd0b01c36e048841d04e1adc04a117c5c516ccdbbc8800742414"},
+		} {
+			require.True(t, isMigrationChecksumCompatible(tc.name, tc.official, tc.fork), tc.name)
+			require.False(t, isMigrationChecksumCompatible(tc.name,
+				"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", tc.fork), tc.name)
+		}
+	})
+
 	t.Run("224未知checksum不兼容", func(t *testing.T) {
 		const name = "224_user_platform_quotas_add_cn_providers.sql"
 		unknown := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -207,6 +220,41 @@ var knownStaleCompatibilityRules = map[string]struct{}{
 	"218_group_audio_voice_pricing.sql":                       {},
 	"219_group_search_price_per_1k.sql":                       {},
 	"220_clear_non_grok_video_generation_config.sql":          {},
+}
+
+func TestCodeBuddyPlatformMigrationChecksumsAcceptOnlyPublishedVersions(t *testing.T) {
+	for name, upstream := range map[string][]string{
+		"237_add_minimax_platform.sql": {
+			"c754b29e15c10ef2a72887c4e2dd04a73a37c6c06218d1b2725836884450c03a",
+			"f4c73d2dbce114ca7ade1aac51998c3465490f4f3c9b3e868e53590f3fa8601b",
+		},
+		"238_add_adobe_platform.sql": {
+			"2cc53fedf0d1f63a6bcf3436f3bba4541875489a2023d589ff01d5922845831e",
+		},
+		"238_opencode_go_platform.sql": {
+			"d310f134e119bd0b01c36e048841d04e1adc04a117c5c516ccdbbc8800742414",
+			"6f987e251519bd3759e60da44620a5d777494cceb333b6ce394aa0ea536ef5a2",
+		},
+		"239_fork_platform_constraints_superset.sql": {
+			"e2f84f274f60276751bda1f22cbad967130989d0a499760bb3e0fbd953473736",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, err := migrations.FS.ReadFile(name)
+			require.NoError(t, err)
+			sum := sha256.Sum256([]byte(strings.TrimSpace(string(body))))
+			current := hex.EncodeToString(sum[:])
+			for _, historical := range upstream {
+				require.True(t, isMigrationChecksumCompatible(name, historical, current), "published upstream checksum %s", historical)
+				require.True(t, isMigrationChecksumCompatible(name, current, historical), "known versions remain bidirectionally compatible")
+			}
+			unknown := strings.Repeat("0", 64)
+			require.False(t, isMigrationChecksumCompatible(name, unknown, current))
+			require.False(t, isMigrationChecksumCompatible(name, upstream[0], unknown))
+			require.False(t, isMigrationChecksumCompatible("unknown.sql", upstream[0], current))
+			require.Len(t, migrationChecksumCompatibilityRules[name].acceptedChecksums, len(upstream)+1)
+		})
+	}
 }
 
 // TestMigrationChecksumCompatibilityRules_NotStale 防漂移：兼容规则里的 checksum 是

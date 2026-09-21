@@ -288,8 +288,8 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T)
 
 	normalized := normalizeSQLWhitespace(capturedSQL)
 	require.Contains(t, normalized, "deleted_at IS NULL")
-	require.Contains(t, normalized, "schedulable = TRUE",
-		"permanently unschedulable accounts must not remain OAuth refresh candidates")
+	require.NotContains(t, normalized, "schedulable = TRUE",
+		"paused (schedulable=false, status=active) accounts must remain OAuth refresh candidates: excluding them lets their stored access_token expire and the usage-window probe then reports a false 'needs re-auth'; permanent rejection is already covered by status = 'active' and refresh failures are bounded by the retry-cooldown exclusion")
 	require.Contains(t, normalized, "status = 'active'")
 	// setup-token 的 access_token 同为 8h 短期令牌，必须与 oauth 一起纳入后台刷新候选
 	require.Contains(t, normalized, "type IN ('oauth', 'setup-token')")
@@ -316,6 +316,38 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T)
 	platforms, err := valuer.Value()
 	require.NoError(t, err)
 	require.Contains(t, platforms, service.PlatformGrok)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// Adobe 没有 refresh_token：cookie 类平台必须按 cookie 进入候选，否则后台永远刷不到它们。
+func TestAccountRepository_ListOAuthRefreshCandidatePage_CookieCredentialPlatforms(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	var capturedSQL string
+	var capturedArgs []any
+	mock.ExpectQuery("SELECT id").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	repo := newAccountRepositoryWithSQL(nil, captureQuerySQL{db: db, captured: &capturedSQL, args: &capturedArgs}, nil)
+
+	page, err := repo.ListOAuthRefreshCandidatePage(context.Background(), service.OAuthRefreshPageOptions{
+		Platforms:                 []string{service.PlatformAnthropic, service.PlatformAdobe},
+		Limit:                     50,
+		RequireRefreshToken:       true,
+		CookieCredentialPlatforms: []string{service.PlatformAdobe},
+	})
+	require.NoError(t, err)
+	require.Empty(t, page.Accounts)
+
+	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, "(credentials ? 'refresh_token' AND btrim(credentials->>'refresh_token') <> '')")
+	require.Contains(t, normalized, "OR (platform = ANY($4) AND btrim(COALESCE(credentials->>'cookie', '')) <> '')")
+	require.Len(t, capturedArgs, 4)
+	valuer, ok := capturedArgs[3].(interface{ Value() (driver.Value, error) })
+	require.True(t, ok)
+	cookiePlatforms, err := valuer.Value()
+	require.NoError(t, err)
+	require.Contains(t, cookiePlatforms, service.PlatformAdobe)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -491,6 +491,21 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexVersionAutoSyncEnabled != after.OpenAICodexVersionAutoSyncEnabled {
 		changed = append(changed, "openai_codex_version_auto_sync_enabled")
 	}
+	if before.OpenAICodexTicketEnabled != after.OpenAICodexTicketEnabled {
+		changed = append(changed, "openai_codex_ticket_enabled")
+	}
+	if before.OpenAICodexTicketHarvestProxyURL != after.OpenAICodexTicketHarvestProxyURL {
+		changed = append(changed, "openai_codex_ticket_harvest_proxy_url")
+	}
+	if before.OpenAICodexTicketDefaultLength != after.OpenAICodexTicketDefaultLength {
+		changed = append(changed, "openai_codex_ticket_default_length")
+	}
+	if !equalOpenAICodexTicketPlanLengthRules(before.OpenAICodexTicketPlanLengthRules, after.OpenAICodexTicketPlanLengthRules) {
+		changed = append(changed, "openai_codex_ticket_plan_lengths")
+	}
+	if before.OpenAICodexTicketFailClosed != after.OpenAICodexTicketFailClosed {
+		changed = append(changed, "openai_codex_ticket_fail_closed")
+	}
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")
 	}
@@ -578,6 +593,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AvailableChannelsEnabled != after.AvailableChannelsEnabled {
 		changed = append(changed, "available_channels_enabled")
+	}
+	if before.SubscriptionEnabled != after.SubscriptionEnabled {
+		changed = append(changed, "subscription_enabled")
 	}
 	if before.ModelPlazaEnabled != after.ModelPlazaEnabled {
 		changed = append(changed, "model_plaza_enabled")
@@ -863,4 +881,17 @@ func stringSetting(value *string, fallback string) string {
 		return fallback
 	}
 	return *value
+}
+
+// equalOpenAICodexTicketPlanLengthRules 比较档位规则是否一致（nil 与空数组视为相等）。
+func equalOpenAICodexTicketPlanLengthRules(b, a []service.OpenAICodexTicketPlanLengthRule) bool {
+	if len(b) != len(a) {
+		return false
+	}
+	for i := range b {
+		if b[i].Plan != a[i].Plan || b[i].Length != a[i].Length {
+			return false
+		}
+	}
+	return true
 }

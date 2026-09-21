@@ -121,6 +121,102 @@ describe('AccountUsageCell', () => {
     })
   })
 
+  it('fetches CodeBuddy credits and preserves the usage summary and progress bar', async () => {
+    getUsage.mockResolvedValue({
+      codebuddy_usage: { total_capacity: 100, remaining: 75, used: 25, account_count: 2, total_dosage: 25 }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 9801, platform: 'codebuddy' }) },
+      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(9801)
+    expect(wrapper.text()).toContain('75')
+    expect(wrapper.text()).toContain('25%')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.codebuddy.accountCount: 2')
+    expect(wrapper.find('div[style="width: 25%;"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('admin.accounts.usageWindow.adobeCredits')
+    wrapper.unmount()
+  })
+
+  it('keeps the upstream Adobe credits branch alongside CodeBuddy', async () => {
+    getUsage.mockResolvedValue({
+      adobe_plan_cap: 'Creative Cloud',
+      adobe_credit: { current_usage: 20, usage_limit: 100, percentage_used: 20 }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 9802, platform: 'adobe' }) },
+      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(9802, 'passive', false)
+    expect(wrapper.text()).toContain('Creative Cloud')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.adobeCredits')
+    expect(wrapper.text()).not.toContain('admin.accounts.usageWindow.codebuddy')
+    wrapper.unmount()
+  })
+
+  it('uses managed batch usage and refresh requests for CodeBuddy', async () => {
+    const requestBatchedUsage = vi.fn()
+    const account = makeAccount({ id: 9803, platform: 'codebuddy' })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account,
+        requestBatchedUsage,
+        batchedUsage: {
+          codebuddy_usage: { total_capacity: 200, remaining: 150, used: 50, account_count: 1, total_dosage: 50 }
+        }
+      },
+      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+
+    expect(requestBatchedUsage).toHaveBeenCalledWith(account, undefined)
+    expect(wrapper.text()).toContain('150')
+    expect(wrapper.text()).toContain('25%')
+    await wrapper.setProps({ manualRefreshToken: 1 })
+    expect(requestBatchedUsage).toHaveBeenLastCalledWith(account, { force: true })
+    expect(getUsage).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each(['oauth', 'setup-token'] as const)('renders Codex ticket status for OpenAI %s accounts', async (type) => {
+    getUsage.mockResolvedValue({})
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: type === 'oauth' ? 9701 : 9702,
+          platform: 'openai',
+          type,
+          codex_turn_tickets: [
+            { model: 'gpt-6-astra', ready: true, remaining_seconds: 2520, blocked: false },
+            { model: 'gpt-5.6-sol', ready: false, remaining_seconds: 0, blocked: true },
+            { model: 'custom-model', ready: false, remaining_seconds: 0, blocked: false },
+          ],
+        }),
+      },
+      global: { stubs: {
+        OpenAIQuotaResetCell: { template: '<div data-test="quota-reset" />' },
+        UsageProgressBar: true,
+        AccountQuotaInfo: true,
+      } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('42m00s')
+    expect(wrapper.text()).toContain('admin.accounts.openai.codexTurnTicketPaused')
+    expect(wrapper.text()).toContain('admin.accounts.openai.codexTurnTicketMissing')
+    if (type === 'setup-token') {
+      expect(getUsage).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-test="quota-reset"]').exists()).toBe(false)
+    }
+    await wrapper.setProps({ account: { ...wrapper.props('account'), codex_turn_tickets: [] } })
+    expect(wrapper.text()).not.toContain('codexTurnTicket')
+    expect(wrapper.text()).not.toContain('42m00s')
+    wrapper.unmount()
+  })
+
   it('renders eligible Ollama Cloud state and forwards query updates', async () => {
     const wrapper = mount(AccountUsageCell, {
       props: {
@@ -169,7 +265,7 @@ describe('AccountUsageCell', () => {
     expect(updatedAccount?.ollama_cloud_usage?.auto_refresh_enabled).toBe(false)
   })
 
-  it.each(['kimi', 'zhipu', 'deepseek'] as const)(
+  it.each(['kimi', 'zhipu', 'deepseek', 'minimax'] as const)(
     '%s apikey 账号 Ollama Cloud eligible 时渲染 Ollama 用量单元格并跳过 CN 子单元格',
     async (platform) => {
       const wrapper = mount(AccountUsageCell, {
@@ -454,6 +550,84 @@ describe('AccountUsageCell', () => {
     // 单一数据源：始终使用 /usage API 返回值，忽略 codex 快照
     expect(wrapper.text()).toContain('5h|18|900')
     expect(wrapper.text()).toContain('7d|36|900')
+  })
+
+  it('仅为 OpenAI OAuth 7d 窗口计算预计总费用', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 25,
+        resets_at: null,
+        remaining_seconds: 0,
+        window_stats: { requests: 1, tokens: 100, cost: 2 }
+      },
+      seven_day: {
+        utilization: 40,
+        resets_at: null,
+        remaining_seconds: 0,
+        window_stats: { requests: 2, tokens: 200, cost: 12 }
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 6752, platform: 'openai', type: 'oauth' })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'estimatedTotalCost'],
+            template: '<div class="usage-bar">{{ label }}|{{ estimatedTotalCost ?? "none" }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('5h|none')
+    expect(wrapper.text()).toContain('7d|30')
+  })
+
+  it.each([
+    { id: 6801, utilization: 0, cost: 12 },
+    { id: 6802, utilization: -1, cost: 12 },
+    { id: 6803, utilization: Number.NaN, cost: 12 },
+    { id: 6804, utilization: 40, cost: 0 },
+    { id: 6805, utilization: 40, cost: Number.POSITIVE_INFINITY }
+  ])('OpenAI OAuth 7d 输入无效时不显示预计总费用 (%o)', async ({ id, utilization, cost }) => {
+    getUsage.mockResolvedValue({
+      seven_day: {
+        utilization,
+        resets_at: null,
+        remaining_seconds: 0,
+        window_stats: { requests: 1, tokens: 100, cost }
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id,
+          platform: 'openai',
+          type: 'oauth'
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'estimatedTotalCost'],
+            template: '<div class="usage-bar">{{ label }}|{{ estimatedTotalCost ?? "none" }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('7d|none')
+    expect(wrapper.text()).not.toMatch(/Infinity|NaN/)
   })
 
   it('OpenAI OAuth 有现成快照时，手动刷新信号会触发 usage 重拉', async () => {

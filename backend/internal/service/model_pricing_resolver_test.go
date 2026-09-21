@@ -230,8 +230,8 @@ func newResolverWithPlatformChannel(t *testing.T, platform string, pricing []Cha
 			return map[int64]string{groupID: platform}, nil
 		},
 	}
-	cs := NewChannelService(repo, nil, nil, nil)
-	bs := NewBillingService(nil, nil)
+	cs := NewChannelService(repo, nil, nil, nil, nil)
+	bs := newTestBillingServiceForResolver()
 	return NewModelPricingResolver(cs, bs)
 }
 
@@ -276,6 +276,8 @@ func TestResolve_KiroGPT56UsesChannelPricingBeforeDefaultOpenAIPricing(t *testin
 
 func TestResolve_KiroGPT56FallsBackToDefaultOpenAIPricingWhenNoChannelPrice(t *testing.T) {
 	r := newResolverWithPlatformChannel(t, PlatformKiro, nil)
+	// This scenario needs the default OpenAI catalog; the resolver stub only has Claude pricing.
+	r.billingService = newTestBillingService()
 
 	resolved := r.Resolve(context.Background(), PricingInput{
 		Model:   "gpt-5.6-luna",
@@ -616,7 +618,7 @@ func TestResolve_WithChannelOverride_CacheError(t *testing.T) {
 			return nil, errors.New("database unavailable")
 		},
 	}
-	cs := NewChannelService(repo, nil, nil, nil)
+	cs := NewChannelService(repo, nil, nil, nil, nil)
 	bs := newTestBillingServiceForResolver()
 	r := NewModelPricingResolver(cs, bs)
 
