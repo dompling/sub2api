@@ -378,6 +378,19 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		)
 		return nil, wrapOpenAIWSFallback("write_request", err)
 	}
+	// ws_bridge HTTP 客户端与 HTTP 上游、WS passthrough 一样受首输出超时约束，
+	// 不能只靠 WS 读超时兜底。
+	bridgeFirstOutputStartedAt := time.Now()
+	bridgeFirstOutputEffort := ""
+	var bridgeFirstOutputTimeout time.Duration
+	if bridgeHTTPClient {
+		if effort := extractOpenAIReasoningEffort(reqBody, mappedModel, originalModel); effort != nil {
+			bridgeFirstOutputEffort = *effort
+		}
+		bridgeFirstOutputTimeout = s.openAIFirstOutputTimeout(bridgeFirstOutputEffort)
+	}
+	bridgeFirstOutputPending := bridgeFirstOutputTimeout > 0
+	bridgeFirstOutputDeadline := bridgeFirstOutputStartedAt.Add(bridgeFirstOutputTimeout)
 	if debugEnabled {
 		logOpenAIWSModeDebug(
 			"write_request_sent account_id=%d conn_id=%s stream=%v payload_bytes=%d previous_response_id=%s",
@@ -492,6 +505,23 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		clearOpenAIWSBridgeAttemptHeaders(c)
 		return nil, failoverErr
 	}
+	bridgeFirstOutputTimedOut := func() (*OpenAIForwardResult, error) {
+		lease.MarkBroken()
+		wsProxyID, wsProxyName := opsUpstreamWSProxyAttribution(account)
+		return bridgeFailover(s.newOpenAIFirstOutputTimeoutError(
+			ctx,
+			c,
+			account,
+			wsProxyID,
+			wsProxyName,
+			bridgeFirstOutputStartedAt,
+			originalModel,
+			bridgeFirstOutputEffort,
+			bridgeFirstOutputTimeout,
+			"websocket_first_semantic_output",
+			lease.HandshakeHeaders(),
+		))
+	}
 
 	flushBatchSize := s.openAIWSEventFlushBatchSize()
 	flushInterval := s.openAIWSEventFlushInterval()
@@ -566,11 +596,21 @@ readLoop:
 		var message []byte
 		var readErr error
 		readUsedDetachedContext := upstreamReadDetached
+		readCappedByFirstOutput := false
+		if bridgeFirstOutputPending && !clientDisconnected && !time.Now().Before(bridgeFirstOutputDeadline) {
+			return bridgeFirstOutputTimedOut()
+		}
 		if len(pendingJSONDocuments) > 0 {
 			message = pendingJSONDocuments[0]
 			pendingJSONDocuments = pendingJSONDocuments[1:]
 		} else {
 			currentReadTimeout := readTimeout
+			if bridgeFirstOutputPending && !clientDisconnected {
+				if remaining := time.Until(bridgeFirstOutputDeadline); remaining < currentReadTimeout {
+					currentReadTimeout = remaining
+					readCappedByFirstOutput = true
+				}
+			}
 			if clientDisconnected && !clientDisconnectDrainStartedAt.IsZero() {
 				remaining := readTimeout - time.Since(clientDisconnectDrainStartedAt)
 				if remaining <= 0 {
@@ -615,6 +655,10 @@ readLoop:
 				return nil, wrapOpenAIWSFallback("invalid_event_json", errors.New("upstream websocket returned malformed Responses event JSON"))
 			}
 			return nil, errors.New("upstream websocket returned malformed Responses event JSON after downstream output")
+		}
+		if readErr != nil && readCappedByFirstOutput && !clientDisconnected &&
+			(errors.Is(readErr, context.DeadlineExceeded) || !time.Now().Before(bridgeFirstOutputDeadline)) {
+			return bridgeFirstOutputTimedOut()
 		}
 		if readErr != nil {
 			lease.MarkBroken()
@@ -662,6 +706,9 @@ readLoop:
 			firstEventType = eventType
 		}
 		lastEventType = eventType
+		if bridgeFirstOutputPending && openAIWSPassthroughStartsSemanticOutput(message) {
+			bridgeFirstOutputPending = false
+		}
 
 		if responseID == "" && eventResponseID != "" {
 			responseID = eventResponseID
