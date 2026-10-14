@@ -932,6 +932,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if reason != "" {
 				wsLastFailureReason = reason
 			}
+			// HTTP 上游遇 5xx/传输失败立即换号；bridge 只对连接级失败在同账号重试一次。
+			if wsBridgeHTTP && retryable && !openAIWSBridgeSameAccountRetryable(reason, attempt) {
+				retryable = false
+			}
 			// previous_response_not_found 说明续链锚点不可用：
 			// 对非 function_call_output 场景，允许一次“去掉 previous_response_id 后重放”。
 			// HTTP 客户端保持与 HTTP 上游一致的 400 语义，不静默丢弃续链。
@@ -1044,6 +1048,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if failoverErr = s.newOpenAIWSBridgeFallbackFailoverError(ctx, c, account, upstreamModel, wsErr); failoverErr != nil {
 				return nil, failoverErr
+			}
+			if s.writeOpenAIWSBridgeCommittedFallbackError(c, account, originalModel, wsErr) {
+				return nil, wsErr
 			}
 		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)

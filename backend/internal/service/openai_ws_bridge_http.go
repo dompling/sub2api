@@ -319,3 +319,103 @@ func (s *OpenAIGatewayService) newOpenAIWSBridgeFallbackFailoverError(
 	}
 	return failoverErr
 }
+
+// openAIWSBridgeSameAccountRetryable 判定 ws_bridge HTTP 请求的 WS 失败是否值得在同一
+// 账号上重试。只有连接级的读写失败（多为池中空闲连接已被上游关闭）重试一次；
+// 5xx、拨号失败、上游错误事件等按 HTTP 上游路径立即交给 handler 切号。
+func openAIWSBridgeSameAccountRetryable(reason string, attempt int) bool {
+	if attempt > 1 {
+		return false
+	}
+	switch strings.TrimPrefix(strings.TrimSpace(reason), "prewarm_") {
+	case "read_event", "write_request", "write":
+		return true
+	default:
+		return false
+	}
+}
+
+// writeOpenAIWSBridgeUncommittedErrorEvent 在尚未向客户端写出任何内容时，按 HTTP 上游
+// 返回非 2xx 的语义写回 error 事件：错误透传规则优先，确定性请求错误（400）保留
+// type/code/param，其余按 handleErrorResponse 的通用映射。调用方需已停止保活。
+func (s *OpenAIGatewayService) writeOpenAIWSBridgeUncommittedErrorEvent(c *gin.Context, account *Account, payload []byte, errMsg string, statusCode int) {
+	if c == nil || c.Writer == nil || c.Writer.Written() || account == nil {
+		return
+	}
+	clearOpenAIWSBridgeAttemptHeaders(c)
+	MarkResponseCommitted(c)
+	if status, errType, ruleMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payload, errMsg); matched {
+		c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": ruleMsg}})
+		return
+	}
+	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(errMsg))
+	if isOpenAIDeterministicClientError(statusCode) {
+		writeOpenAIUpstreamClientError(c, statusCode, payload, upstreamMsg)
+		return
+	}
+	status, errType, clientMsg := openAIUpstreamGenericClientError(statusCode, upstreamMsg, payload)
+	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": clientMsg}})
+}
+
+// openAIWSBridgeCommittedErrorFrame 返回响应已提交（保活或已有输出）后 error 事件要下发的
+// data 帧内容，对齐 HTTP 上游流式路径：OAuth 类账号只发带真实 code/message 的
+// response.failed（裸 error 帧不是 Codex 认可的终止事件）；API Key 账号原样转发 error 帧。
+func openAIWSBridgeCommittedErrorFrame(account *Account, responseID, model string, payload []byte, errMsg string, output *openAIWSBridgeStreamOutput, clientOutputStarted bool) []byte {
+	if account != nil && account.IsOpenAIOAuthLike() {
+		return buildOpenAIResponseFailedPayload(responseID, model, payload, errMsg)
+	}
+	return output.prepare("error", payload, clientOutputStarted)
+}
+
+// writeOpenAIWSBridgeCommittedFallbackError 处理保活已提交 200、但尚无语义输出时的
+// WS 降级错误（如 previous_response_not_found）：把真实原因写成 response.failed，
+// 避免 writeOpenAIWSFallbackErrorResponse 因 Written() 跳过、最终只剩通用错误。
+// 返回 false 表示不适用（未写出、已有语义输出或无法归类），由调用方沿用原有处理。
+func (s *OpenAIGatewayService) writeOpenAIWSBridgeCommittedFallbackError(c *gin.Context, account *Account, model string, wsErr error) bool {
+	if c == nil || c.Writer == nil || !c.Writer.Written() || openAIStreamClientOutputStarted(c, false) {
+		return false
+	}
+	statusCode, errType, clientMessage, upstreamMessage, ok := resolveOpenAIWSFallbackErrorResponse(wsErr)
+	if !ok {
+		return false
+	}
+	code := "upstream_error"
+	var fallbackErr *openAIWSFallbackError
+	if errors.As(wsErr, &fallbackErr) && fallbackErr != nil {
+		switch reason := strings.TrimPrefix(strings.TrimSpace(fallbackErr.Reason), "prewarm_"); reason {
+		case "previous_response_not_found", "invalid_encrypted_content":
+			code = reason
+		}
+	}
+	if strings.TrimSpace(clientMessage) == "" {
+		clientMessage = "Upstream request failed"
+	}
+	if strings.TrimSpace(upstreamMessage) == "" {
+		upstreamMessage = clientMessage
+	}
+	source, err := json.Marshal(gin.H{"error": gin.H{"type": errType, "code": code, "message": clientMessage}})
+	if err != nil {
+		return false
+	}
+	setOpsUpstreamError(c, statusCode, upstreamMessage, "")
+	if account != nil {
+		proxyID, proxyName := opsUpstreamWSProxyAttribution(account)
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            proxyID,
+			ProxyName:          proxyName,
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: statusCode,
+			Kind:               "ws_error",
+			Message:            upstreamMessage,
+		})
+	}
+	MarkResponseCommitted(c)
+	if _, err := c.Writer.WriteString(buildOpenAIResponseFailedSSE("", model, source, clientMessage)); err == nil {
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	return true
+}

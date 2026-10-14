@@ -25,27 +25,42 @@ const (
 )
 
 // wsBridgeTestServer 是 ws_bridge 测试用的上游 WS：读取 response.create 后等待 delay，
-// 再依次写出 events。rejectStatus 非零时直接以该状态码拒绝握手。
+// 再依次写出 events。
 type wsBridgeTestServer struct {
 	*httptest.Server
-	requests     atomic.Int32
-	lastStream   atomic.Bool
+	dials      atomic.Int32
+	conns      atomic.Int32
+	requests   atomic.Int32
+	lastStream atomic.Bool
+	opts       wsBridgeTestServerOptions
+}
+
+type wsBridgeTestServerOptions struct {
+	// rejectStatus 非零时直接以该状态码拒绝握手。
 	rejectStatus int
 	delay        time.Duration
+	// closeFirstConns：前 N 个连接读到请求后直接断开（模拟池中连接被上游关闭）。
+	closeFirstConns int32
 }
 
 func newWSBridgeTestServer(t *testing.T, rejectStatus int, events ...string) *wsBridgeTestServer {
 	t.Helper()
-	return newWSBridgeTestServerWithDelay(t, rejectStatus, 0, events...)
+	return newWSBridgeTestServerWithOptions(t, wsBridgeTestServerOptions{rejectStatus: rejectStatus}, events...)
 }
 
 func newWSBridgeTestServerWithDelay(t *testing.T, rejectStatus int, delay time.Duration, events ...string) *wsBridgeTestServer {
 	t.Helper()
-	srv := &wsBridgeTestServer{rejectStatus: rejectStatus, delay: delay}
+	return newWSBridgeTestServerWithOptions(t, wsBridgeTestServerOptions{rejectStatus: rejectStatus, delay: delay}, events...)
+}
+
+func newWSBridgeTestServerWithOptions(t *testing.T, opts wsBridgeTestServerOptions, events ...string) *wsBridgeTestServer {
+	t.Helper()
+	srv := &wsBridgeTestServer{opts: opts}
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	srv.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if srv.rejectStatus != 0 {
-			http.Error(w, "upstream unavailable", srv.rejectStatus)
+		srv.dials.Add(1)
+		if srv.opts.rejectStatus != 0 {
+			http.Error(w, "upstream unavailable", srv.opts.rejectStatus)
 			return
 		}
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -54,6 +69,7 @@ func newWSBridgeTestServerWithDelay(t *testing.T, rejectStatus int, delay time.D
 			return
 		}
 		defer func() { _ = conn.Close() }()
+		connIndex := srv.conns.Add(1)
 		for {
 			var request map[string]any
 			if err := conn.ReadJSON(&request); err != nil {
@@ -61,8 +77,11 @@ func newWSBridgeTestServerWithDelay(t *testing.T, rejectStatus int, delay time.D
 			}
 			srv.requests.Add(1)
 			srv.lastStream.Store(gjson.Get(requestToJSONString(request), "stream").Bool())
-			if srv.delay > 0 {
-				time.Sleep(srv.delay)
+			if connIndex <= srv.opts.closeFirstConns {
+				return
+			}
+			if srv.opts.delay > 0 {
+				time.Sleep(srv.opts.delay)
 			}
 			for _, event := range events {
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(event)); err != nil {
@@ -91,7 +110,6 @@ func newWSBridgeTestConfig() *config.Config {
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 30
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 10
-	cfg.Gateway.OpenAIWS.RetryTotalBudgetMS = 1
 	return cfg
 }
 
@@ -350,7 +368,8 @@ func TestOpenAIWSBridge_Forward_DialFailureFailsOver(t *testing.T) {
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.True(t, errors.As(err, &failoverErr), "WS 拨号失败应交给 handler 切号: %v", err)
-	require.GreaterOrEqual(t, failoverErr.StatusCode, http.StatusInternalServerError)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	require.Equal(t, int32(1), wsServer.dials.Load(), "上游 5xx 应立即切号，不在同账号重试")
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
 	require.Nil(t, upstream.lastReq, "ws_bridge 不回退 HTTP 上游，由 handler 换号")
@@ -375,6 +394,9 @@ func TestOpenAIWSBridge_Forward_PreviousResponseNotFoundIsNotSilentlyDropped(t *
 	require.Equal(t, int32(1), wsServer.requests.Load(), "HTTP 客户端不应静默去掉 previous_response_id 重放")
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	require.True(t, gjson.Valid(rec.Body.String()), "响应体应是单个 JSON，不能拼接 SSE: %s", rec.Body.String())
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.True(t, IsResponseCommitted(c), "已写出 JSON 必须标记已提交，handler 才不会追加 response.failed")
 	require.Nil(t, upstream.lastReq)
 }
 
@@ -397,4 +419,156 @@ func TestOpenAIWSBridge_Forward_KeepaliveBeforeOutputDoesNotBlockFailover(t *tes
 	require.True(t, strings.HasPrefix(rec.Body.String(), ":\n\n"), "首输出前应写出 SSE 保活注释")
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "保活字节不算语义输出，handler 仍可切号")
+}
+
+const wsBridgeTestContextWindowErrorEvent = `{"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model."}}`
+
+func TestOpenAIWSBridge_Forward_ClientErrorEventBeforeOutputReturnsJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServer(t, 0, wsBridgeTestCreatedEvent, wsBridgeTestContextWindowErrorEvent)
+	cfg := newWSBridgeTestConfig()
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, rec := newWSBridgeTestContext("/openai/v1/responses")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	require.Nil(t, result)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "上下文超限是请求级错误，不应换号")
+	require.True(t, strings.HasPrefix(err.Error(), "upstream response failed:"), err.Error())
+	require.Equal(t, http.StatusBadRequest, rec.Code, "应与 HTTP 上游一致返回 400")
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	body := rec.Body.String()
+	require.True(t, gjson.Valid(body), "响应体应是单个 JSON: %s", body)
+	require.Equal(t, "invalid_request_error", gjson.Get(body, "error.type").String())
+	require.Equal(t, "context_length_exceeded", gjson.Get(body, "error.code").String())
+	require.True(t, IsResponseCommitted(c), "必须标记已提交，handler 才不会追加通用 response.failed")
+	require.Equal(t, int32(1), wsServer.requests.Load())
+	require.Nil(t, upstream.lastReq)
+}
+
+func TestOpenAIWSBridge_Forward_ClientErrorEventAfterKeepaliveKeepsSingleTerminal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServerWithDelay(t, 0, 1500*time.Millisecond, wsBridgeTestContextWindowErrorEvent)
+	cfg := newWSBridgeTestConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 1
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, rec := newWSBridgeTestContext("/openai/v1/responses")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	require.Nil(t, result)
+	require.Error(t, err)
+	body := rec.Body.String()
+	require.True(t, strings.HasPrefix(body, ":\n\n"), body)
+	require.Equal(t, 1, strings.Count(body, `"context_length_exceeded"`), "真实错误只下发一次: %s", body)
+	require.NotContains(t, body, "response.failed", "API Key 账号转发上游 error 帧，不再追加终止事件")
+	require.True(t, IsResponseCommitted(c))
+}
+
+func TestOpenAIWSBridge_Forward_ErrorEventAfterOutputIsCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServer(t, 0,
+		wsBridgeTestCreatedEvent,
+		`{"type":"response.output_text.delta","delta":"hi"}`,
+		`{"type":"error","error":{"type":"invalid_request_error","code":"bad_request","message":"stream aborted"}}`,
+	)
+	cfg := newWSBridgeTestConfig()
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, rec := newWSBridgeTestContext("/openai/v1/responses")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	require.Nil(t, result)
+	require.Error(t, err)
+	body := strings.TrimRight(rec.Body.String(), "\n")
+	lines := strings.Split(body, "\n")
+	require.Equal(t, "error", gjson.Get(strings.TrimPrefix(lines[len(lines)-1], "data: "), "type").String(), "最后一帧应是上游 error: %s", body)
+	require.Contains(t, body, `"delta":"hi"`)
+	require.True(t, IsResponseCommitted(c))
+}
+
+func TestOpenAIWSBridgeCommittedErrorFrame(t *testing.T) {
+	payload := []byte(wsBridgeTestContextWindowErrorEvent)
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	frame := openAIWSBridgeCommittedErrorFrame(oauth, "resp_1", "gpt-5.1", payload, "Your input exceeds the context window of this model.", nil, true)
+	require.Equal(t, "response.failed", gjson.GetBytes(frame, "type").String(), "OAuth 账号只发 Codex 认可的终止事件")
+	require.Equal(t, "resp_1", gjson.GetBytes(frame, "response.id").String())
+	require.Equal(t, "failed", gjson.GetBytes(frame, "response.status").String())
+	require.Equal(t, "context_length_exceeded", gjson.GetBytes(frame, "response.error.code").String())
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(frame, "response.error.type").String())
+
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	frame = openAIWSBridgeCommittedErrorFrame(apiKey, "resp_1", "gpt-5.1", payload, "", newOpenAIWSBridgeStreamOutput(), true)
+	require.Equal(t, "error", gjson.GetBytes(frame, "type").String(), "API Key 账号原样转发 error 帧")
+	require.Equal(t, "context_length_exceeded", gjson.GetBytes(frame, "error.code").String())
+}
+
+func TestOpenAIWSBridge_Forward_FallbackErrorAfterKeepaliveWritesResponseFailed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServerWithDelay(t, 0, 1500*time.Millisecond,
+		`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"Previous response with id 'resp_prev' not found."}}`,
+	)
+	cfg := newWSBridgeTestConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 1
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, rec := newWSBridgeTestContext("/openai/v1/responses")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"previous_response_id":"resp_prev","input":"hello"}`))
+	require.Nil(t, result)
+	require.Error(t, err)
+	body := rec.Body.String()
+	require.True(t, strings.HasPrefix(body, ":\n\n"), body)
+	require.Equal(t, 1, strings.Count(body, "event: response.failed"), body)
+	var failedData string
+	for _, line := range strings.Split(body, "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			failedData = data
+		}
+	}
+	require.Equal(t, "previous_response_not_found", gjson.Get(failedData, "response.error.code").String(), body)
+	require.True(t, IsResponseCommitted(c))
+	require.Equal(t, int32(1), wsServer.requests.Load())
+}
+
+func TestOpenAIWSBridge_Forward_RetriesClosedConnectionOnceOnSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServerWithOptions(t, wsBridgeTestServerOptions{closeFirstConns: 1},
+		wsBridgeTestCreatedEvent, wsBridgeTestCompletedEvent)
+	cfg := newWSBridgeTestConfig()
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, _ := newWSBridgeTestContext("/openai/v1/responses")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.OpenAIWSMode)
+	require.Equal(t, int32(2), wsServer.requests.Load(), "连接被关闭后应换新连接在同账号重试一次")
+}
+
+func TestOpenAIWSBridge_Forward_RepeatedConnectionFailureFailsOverAfterOneRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServerWithOptions(t, wsBridgeTestServerOptions{closeFirstConns: 100},
+		wsBridgeTestCreatedEvent, wsBridgeTestCompletedEvent)
+	cfg := newWSBridgeTestConfig()
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, rec := newWSBridgeTestContext("/openai/v1/responses")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr), "%v", err)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, int32(2), wsServer.requests.Load(), "同账号最多重试一次就切号")
+	require.Empty(t, rec.Body.String())
 }

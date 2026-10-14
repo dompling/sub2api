@@ -772,13 +772,24 @@ readLoop:
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 			setOpsUpstreamError(c, statusCode, errMsg, "")
+			if bridgeHTTPClient {
+				// 对齐 HTTP 上游路径的错误语义：未写出时按状态码 + JSON 返回，已提交时只发
+				// 一个终止事件；并标记已提交，避免 handler 再追加通用 response.failed。
+				stopBridgeKeepalive()
+				if !clientDisconnected {
+					if !wroteDownstream && !c.Writer.Written() {
+						s.writeOpenAIWSBridgeUncommittedErrorEvent(c, account, message, errMsg, statusCode)
+					} else {
+						flushBufferedStreamEvents("error_event")
+						emitStreamMessage(openAIWSBridgeCommittedErrorFrame(account, responseID, originalModel, message, errMsg, bridgeOutput, wroteDownstream), true)
+						MarkResponseCommitted(c)
+					}
+				}
+				return nil, fmt.Errorf("upstream response failed: %s", errMsg)
+			}
 			if reqStream && !clientDisconnected {
 				flushBufferedStreamEvents("error_event")
-				if bridgeOutput != nil {
-					emitStreamMessage(bridgeOutput.prepare(eventType, message, wroteDownstream), true)
-				} else {
-					emitStreamMessage(message, true)
-				}
+				emitStreamMessage(message, true)
 			}
 			if !reqStream {
 				c.JSON(statusCode, gin.H{
