@@ -335,36 +335,48 @@ func openAIWSBridgeSameAccountRetryable(reason string, attempt int) bool {
 	}
 }
 
+// openAIWSBridgeClientErrorPayload 返回可以写回客户端的 error 事件与 message：先按
+// HTTP 上游路径做 agent identity 凭据脱敏，再提取（已清洗的）错误信息。切号判定、
+// 账号副作用与日志仍使用原始 payload。
+func (s *OpenAIGatewayService) openAIWSBridgeClientErrorPayload(ctx context.Context, account *Account, payload []byte) ([]byte, string) {
+	redacted := s.redactAgentIdentitySensitiveBody(ctx, account, payload)
+	return redacted, extractOpenAISSEErrorMessage(redacted)
+}
+
 // writeOpenAIWSBridgeUncommittedErrorEvent 在尚未向客户端写出任何内容时，按 HTTP 上游
 // 返回非 2xx 的语义写回 error 事件：错误透传规则优先，确定性请求错误（400）保留
-// type/code/param，其余按 handleErrorResponse 的通用映射。调用方需已停止保活。
-func (s *OpenAIGatewayService) writeOpenAIWSBridgeUncommittedErrorEvent(c *gin.Context, account *Account, payload []byte, errMsg string, statusCode int) {
+// type/code/param，其余按 handleErrorResponse 的通用映射。payload 与 clientMsg 须已经
+// openAIWSBridgeClientErrorPayload 脱敏；调用方需已停止保活。
+func (s *OpenAIGatewayService) writeOpenAIWSBridgeUncommittedErrorEvent(c *gin.Context, account *Account, payload []byte, clientMsg string, statusCode int) {
 	if c == nil || c.Writer == nil || c.Writer.Written() || account == nil {
 		return
 	}
 	clearOpenAIWSBridgeAttemptHeaders(c)
 	MarkResponseCommitted(c)
-	if status, errType, ruleMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payload, errMsg); matched {
+	if status, errType, ruleMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payload, clientMsg); matched {
 		c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": ruleMsg}})
 		return
 	}
-	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(errMsg))
 	if isOpenAIDeterministicClientError(statusCode) {
-		writeOpenAIUpstreamClientError(c, statusCode, payload, upstreamMsg)
+		writeOpenAIUpstreamClientError(c, statusCode, payload, clientMsg)
 		return
 	}
-	status, errType, clientMsg := openAIUpstreamGenericClientError(statusCode, upstreamMsg, payload)
-	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": clientMsg}})
+	status, errType, genericMsg := openAIUpstreamGenericClientError(statusCode, clientMsg, payload)
+	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": genericMsg}})
 }
 
-// openAIWSBridgeCommittedErrorFrame 返回响应已提交（保活或已有输出）后 error 事件要下发的
-// data 帧内容，对齐 HTTP 上游流式路径：OAuth 类账号只发带真实 code/message 的
-// response.failed（裸 error 帧不是 Codex 认可的终止事件）；API Key 账号原样转发 error 帧。
-func openAIWSBridgeCommittedErrorFrame(account *Account, responseID, model string, payload []byte, errMsg string, output *openAIWSBridgeStreamOutput, clientOutputStarted bool) []byte {
+// openAIWSBridgeCommittedErrorFrames 返回响应已提交（保活或已有输出）后 error 事件要依次
+// 下发的 data 帧，保证恰好一个终止事件：WS 路径收到 error 即结束，等不到上游随后的
+// response.failed，因此总是补一个带真实 code/message 的 response.failed（降载码改写为
+// 可重试的 server_error）。OAuth 类账号不发裸 error 帧（对齐 HTTP 路径对 Codex 的处理）；
+// API Key 账号先转发经脱敏的 error 帧。payload 须已经 openAIWSBridgeClientErrorPayload 脱敏。
+func openAIWSBridgeCommittedErrorFrames(account *Account, responseID, model string, payload []byte, clientMsg string, output *openAIWSBridgeStreamOutput, clientOutputStarted bool) [][]byte {
+	failedSource, _ := sanitizeOpenAICapacityShedErrorCodeForClient(payload)
+	failed := buildOpenAIResponseFailedPayload(responseID, model, failedSource, clientMsg)
 	if account != nil && account.IsOpenAIOAuthLike() {
-		return buildOpenAIResponseFailedPayload(responseID, model, payload, errMsg)
+		return [][]byte{failed}
 	}
-	return output.prepare("error", payload, clientOutputStarted)
+	return [][]byte{output.prepare("error", payload, clientOutputStarted), failed}
 }
 
 // writeOpenAIWSBridgeCommittedFallbackError 处理保活已提交 200、但尚无语义输出时的

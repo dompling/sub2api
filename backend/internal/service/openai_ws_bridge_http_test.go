@@ -449,6 +449,17 @@ func TestOpenAIWSBridge_Forward_ClientErrorEventBeforeOutputReturnsJSON(t *testi
 	require.Nil(t, upstream.lastReq)
 }
 
+// wsBridgeTestDataFrames 返回 SSE body 中所有 data 帧的 JSON。
+func wsBridgeTestDataFrames(body string) []string {
+	var frames []string
+	for _, line := range strings.Split(body, "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			frames = append(frames, data)
+		}
+	}
+	return frames
+}
+
 func TestOpenAIWSBridge_Forward_ClientErrorEventAfterKeepaliveKeepsSingleTerminal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	wsServer := newWSBridgeTestServerWithDelay(t, 0, 1500*time.Millisecond, wsBridgeTestContextWindowErrorEvent)
@@ -464,8 +475,11 @@ func TestOpenAIWSBridge_Forward_ClientErrorEventAfterKeepaliveKeepsSingleTermina
 	require.Error(t, err)
 	body := rec.Body.String()
 	require.True(t, strings.HasPrefix(body, ":\n\n"), body)
-	require.Equal(t, 1, strings.Count(body, `"context_length_exceeded"`), "真实错误只下发一次: %s", body)
-	require.NotContains(t, body, "response.failed", "API Key 账号转发上游 error 帧，不再追加终止事件")
+	frames := wsBridgeTestDataFrames(body)
+	require.Len(t, frames, 2, "API Key 账号：上游 error 帧 + 一个终止事件: %s", body)
+	require.Equal(t, "error", gjson.Get(frames[0], "type").String())
+	require.Equal(t, "response.failed", gjson.Get(frames[1], "type").String())
+	require.Equal(t, "context_length_exceeded", gjson.Get(frames[1], "response.error.code").String())
 	require.True(t, IsResponseCommitted(c))
 }
 
@@ -485,27 +499,83 @@ func TestOpenAIWSBridge_Forward_ErrorEventAfterOutputIsCommitted(t *testing.T) {
 	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
 	require.Nil(t, result)
 	require.Error(t, err)
-	body := strings.TrimRight(rec.Body.String(), "\n")
-	lines := strings.Split(body, "\n")
-	require.Equal(t, "error", gjson.Get(strings.TrimPrefix(lines[len(lines)-1], "data: "), "type").String(), "最后一帧应是上游 error: %s", body)
+	body := rec.Body.String()
+	frames := wsBridgeTestDataFrames(body)
+	require.GreaterOrEqual(t, len(frames), 3, body)
 	require.Contains(t, body, `"delta":"hi"`)
+	require.Equal(t, "error", gjson.Get(frames[len(frames)-2], "type").String(), "终止事件前应先转发上游 error: %s", body)
+	last := frames[len(frames)-1]
+	require.Equal(t, "response.failed", gjson.Get(last, "type").String(), "最后一帧应是终止事件: %s", body)
+	require.Equal(t, "resp_ws_1", gjson.Get(last, "response.id").String())
+	require.Equal(t, "bad_request", gjson.Get(last, "response.error.code").String())
+	require.Equal(t, 1, strings.Count(body, `"response.failed"`))
 	require.True(t, IsResponseCommitted(c))
 }
 
-func TestOpenAIWSBridgeCommittedErrorFrame(t *testing.T) {
-	payload := []byte(wsBridgeTestContextWindowErrorEvent)
+func TestOpenAIWSBridgeCommittedErrorFrames(t *testing.T) {
+	const overloaded = `{"type":"error","error":{"type":"server_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`
 	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-	frame := openAIWSBridgeCommittedErrorFrame(oauth, "resp_1", "gpt-5.1", payload, "Your input exceeds the context window of this model.", nil, true)
-	require.Equal(t, "response.failed", gjson.GetBytes(frame, "type").String(), "OAuth 账号只发 Codex 认可的终止事件")
-	require.Equal(t, "resp_1", gjson.GetBytes(frame, "response.id").String())
-	require.Equal(t, "failed", gjson.GetBytes(frame, "response.status").String())
-	require.Equal(t, "context_length_exceeded", gjson.GetBytes(frame, "response.error.code").String())
-	require.Equal(t, "invalid_request_error", gjson.GetBytes(frame, "response.error.type").String())
-
 	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
-	frame = openAIWSBridgeCommittedErrorFrame(apiKey, "resp_1", "gpt-5.1", payload, "", newOpenAIWSBridgeStreamOutput(), true)
-	require.Equal(t, "error", gjson.GetBytes(frame, "type").String(), "API Key 账号原样转发 error 帧")
-	require.Equal(t, "context_length_exceeded", gjson.GetBytes(frame, "error.code").String())
+
+	t.Run("oauth capacity shed is rewritten to retryable code", func(t *testing.T) {
+		frames := openAIWSBridgeCommittedErrorFrames(oauth, "resp_1", "gpt-5.1", []byte(overloaded), "overloaded", nil, true)
+		require.Len(t, frames, 1, "OAuth 账号只发 Codex 认可的终止事件")
+		require.Equal(t, "response.failed", gjson.GetBytes(frames[0], "type").String())
+		require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(frames[0], "response.error.code").String())
+		require.NotContains(t, string(frames[0]), "server_is_overloaded")
+	})
+
+	t.Run("oauth keeps real request error code", func(t *testing.T) {
+		frames := openAIWSBridgeCommittedErrorFrames(oauth, "resp_1", "gpt-5.1", []byte(wsBridgeTestContextWindowErrorEvent), "context", nil, true)
+		require.Len(t, frames, 1)
+		require.Equal(t, "resp_1", gjson.GetBytes(frames[0], "response.id").String())
+		require.Equal(t, "failed", gjson.GetBytes(frames[0], "response.status").String())
+		require.Equal(t, "context_length_exceeded", gjson.GetBytes(frames[0], "response.error.code").String())
+		require.Equal(t, "invalid_request_error", gjson.GetBytes(frames[0], "response.error.type").String())
+	})
+
+	t.Run("api key forwards error frame then terminal", func(t *testing.T) {
+		frames := openAIWSBridgeCommittedErrorFrames(apiKey, "resp_1", "gpt-5.1", []byte(overloaded), "overloaded", newOpenAIWSBridgeStreamOutput(), true)
+		require.Len(t, frames, 2)
+		require.Equal(t, "error", gjson.GetBytes(frames[0], "type").String())
+		require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(frames[0], "error.code").String())
+		require.Equal(t, "response.failed", gjson.GetBytes(frames[1], "type").String())
+		require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(frames[1], "response.error.code").String())
+	})
+}
+
+func TestOpenAIWSBridgeClientErrorPayloadRedactsAgentIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key, privateKey := newTestAgentIdentityKey(t)
+	account := &Account{
+		ID:       26,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"auth_mode":         OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":  key.runtimeID,
+			"agent_private_key": privateKey,
+			"task_id":           key.taskID,
+			"access_token":      key.runtimeID + "-oauth-value",
+		},
+	}
+	secret := account.GetCredential("access_token")
+	payload := []byte(`{"type":"error","error":{"type":"invalid_request_error","code":"bad_request","message":"bad token ` + secret + `"}}`)
+	svc := &OpenAIGatewayService{}
+
+	clientPayload, clientMsg := svc.openAIWSBridgeClientErrorPayload(context.Background(), account, payload)
+	require.NotContains(t, string(clientPayload), secret)
+	require.NotContains(t, clientMsg, secret)
+
+	c, rec := newWSBridgeTestContext("/openai/v1/responses")
+	svc.writeOpenAIWSBridgeUncommittedErrorEvent(c, account, clientPayload, clientMsg, http.StatusBadRequest)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.NotContains(t, rec.Body.String(), secret)
+	require.Contains(t, rec.Body.String(), "[redacted]")
+
+	for _, frame := range openAIWSBridgeCommittedErrorFrames(account, "resp_1", "gpt-5.1", clientPayload, clientMsg, nil, true) {
+		require.NotContains(t, string(frame), secret)
+	}
 }
 
 func TestOpenAIWSBridge_Forward_FallbackErrorAfterKeepaliveWritesResponseFailed(t *testing.T) {

@@ -777,11 +777,14 @@ readLoop:
 				// 一个终止事件；并标记已提交，避免 handler 再追加通用 response.failed。
 				stopBridgeKeepalive()
 				if !clientDisconnected {
+					clientPayload, clientMsg := s.openAIWSBridgeClientErrorPayload(ctx, account, message)
 					if !wroteDownstream && !c.Writer.Written() {
-						s.writeOpenAIWSBridgeUncommittedErrorEvent(c, account, message, errMsg, statusCode)
+						s.writeOpenAIWSBridgeUncommittedErrorEvent(c, account, clientPayload, clientMsg, statusCode)
 					} else {
 						flushBufferedStreamEvents("error_event")
-						emitStreamMessage(openAIWSBridgeCommittedErrorFrame(account, responseID, originalModel, message, errMsg, bridgeOutput, wroteDownstream), true)
+						for _, frame := range openAIWSBridgeCommittedErrorFrames(account, responseID, originalModel, clientPayload, clientMsg, bridgeOutput, wroteDownstream) {
+							emitStreamMessage(frame, true)
+						}
 						MarkResponseCommitted(c)
 					}
 				}
