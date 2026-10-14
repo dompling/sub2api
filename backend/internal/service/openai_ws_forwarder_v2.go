@@ -34,10 +34,14 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	attempt int,
 	lastFailureReason string,
 	agentTaskRecoveryTried *bool,
+	bridgeHTTPClient bool,
 ) (*OpenAIForwardResult, error) {
 	if s == nil || account == nil {
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
+	// bridgeHTTPClient：ws_bridge 放行的流式 HTTP 客户端，需要在切号、保活、
+	// 响应头与终态事件上对齐 HTTP 上游路径（见 openai_ws_bridge_http.go）。
+	bridgeHTTPClient = bridgeHTTPClient && reqStream
 	responseModelObserver := &upstreamResponseModelObserver{}
 
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
@@ -69,6 +73,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	if c != nil && c.Request != nil {
 		turnState = strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 		turnMetadata = strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader))
+	}
+	if bridgeHTTPClient {
+		turnState = s.guardOpenAIWSBridgeClientTurnState(c, account, turnState)
 	}
 	setOpenAIWSTurnMetadata(payload, turnMetadata)
 	applyStagedCodexFingerprintClientMetadata(c, account, payload)
@@ -131,7 +138,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	if executionScope = strings.TrimSpace(executionScope); executionScope != "" {
 		sessionHash = executionScope
 	}
-	if turnState == "" && stateStore != nil && sessionHash != "" {
+	// HTTP 客户端自行回带 turn-state（HTTP 上游路径也没有会话级回填），不从 WS 会话状态补。
+	if turnState == "" && !bridgeHTTPClient && stateStore != nil && sessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
 			turnState = savedTurnState
 		}
@@ -261,6 +269,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		var dialErr *openAIWSDialError
 		if errors.As(err, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
 			s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()), mappedModel)
+			if bridgeHTTPClient {
+				return nil, s.newOpenAIWSRateLimitFailoverError(account, dialErr.ResponseHeaders, nil, err.Error())
+			}
 		}
 		return nil, wrapOpenAIWSFallback(classifyOpenAIWSAcquireError(err), err)
 	}
@@ -331,9 +342,15 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if stateStore != nil && sessionHash != "" {
 			stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
 		}
-		if c != nil {
+		if c != nil && !bridgeHTTPClient {
 			c.Header(http.CanonicalHeaderKey(openAIWSTurnStateHeader), handshakeTurnState)
 		}
+	}
+	// HTTP 客户端的 turn-state 暂存到首个语义输出再提交，避免切号后串到另一个账号的响应；
+	// 复用的池连接握手头属于更早的请求，不透出。
+	var bridgeStagedHeaders http.Header
+	if bridgeHTTPClient && !lease.Reused() {
+		stageOpenAICodexTurnState(&bridgeStagedHeaders, lease.HandshakeHeaders())
 	}
 
 	if err := s.performOpenAIWSGeneratePrewarm(
@@ -462,6 +479,19 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 		flusher = f
 	}
+	stopBridgeKeepalive := func() {}
+	var bridgeOutput *openAIWSBridgeStreamOutput
+	if bridgeHTTPClient {
+		stopBridgeKeepalive = s.startOpenAIWSBridgeKeepalive(ctx, c, flusher)
+		defer stopBridgeKeepalive()
+		bridgeOutput = newOpenAIWSBridgeStreamOutput()
+	}
+	// bridgeFailover 在首个语义输出前把本次 attempt 交还 handler 切号。
+	bridgeFailover := func(failoverErr *UpstreamFailoverError) (*OpenAIForwardResult, error) {
+		stopBridgeKeepalive()
+		clearOpenAIWSBridgeAttemptHeaders(c)
+		return nil, failoverErr
+	}
 
 	flushBatchSize := s.openAIWSEventFlushBatchSize()
 	flushInterval := s.openAIWSEventFlushInterval()
@@ -483,6 +513,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	emitStreamMessage := func(message []byte, forceFlush bool) {
 		if clientDisconnected {
 			return
+		}
+		if bridgeHTTPClient && !wroteDownstream {
+			stopBridgeKeepalive()
+			s.commitOpenAIWSBridgeStagedHeaders(c, account, bridgeStagedHeaders)
 		}
 		frame := make([]byte, 0, len(message)+8)
 		frame = append(frame, "data: "...)
@@ -731,11 +765,20 @@ readLoop:
 			if !wroteDownstream && canFallback {
 				return nil, wrapOpenAIWSFallback(fallbackReason, errors.New(errMsg))
 			}
+			if bridgeHTTPClient && !wroteDownstream {
+				if failoverErr := s.newOpenAIWSBridgeEventFailoverError(c, account, mappedModel, eventType, message, lease.HandshakeHeaders()); failoverErr != nil {
+					return bridgeFailover(failoverErr)
+				}
+			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 			setOpsUpstreamError(c, statusCode, errMsg, "")
 			if reqStream && !clientDisconnected {
 				flushBufferedStreamEvents("error_event")
-				emitStreamMessage(message, true)
+				if bridgeOutput != nil {
+					emitStreamMessage(bridgeOutput.prepare(eventType, message, wroteDownstream), true)
+				} else {
+					emitStreamMessage(message, true)
+				}
 			}
 			if !reqStream {
 				c.JSON(statusCode, gin.H{
@@ -749,12 +792,16 @@ readLoop:
 		}
 
 		if reqStream {
+			clientMessage := message
+			if bridgeOutput != nil && !clientDisconnected {
+				clientMessage = bridgeOutput.prepare(eventType, message, wroteDownstream)
+			}
 			// 在首个 token 前先缓冲事件（如 response.created），
 			// 以便上游早期断连时仍可安全回退到 HTTP，不给下游发送半截流。
 			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
-				buffered := make([]byte, len(message))
-				copy(buffered, message)
+				buffered := make([]byte, len(clientMessage))
+				copy(buffered, clientMessage)
 				bufferedStreamEvents = append(bufferedStreamEvents, buffered)
 				bufferedEventCount++
 				if debugEnabled && shouldLogOpenAIWSBufferedEvent(bufferedEventCount) {
@@ -769,8 +816,15 @@ readLoop:
 					)
 				}
 			} else {
+				if bridgeHTTPClient && !wroteDownstream && eventType == "response.failed" {
+					if failoverErr := s.newOpenAIWSBridgeEventFailoverError(c, account, mappedModel, eventType, message, lease.HandshakeHeaders()); failoverErr != nil {
+						// 正常路径在下发后由 handleOpenAIWSTerminalTransientFailure 处理账号副作用，切号前补上。
+						s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+						return bridgeFailover(failoverErr)
+					}
+				}
 				flushBufferedStreamEvents(eventType)
-				emitStreamMessage(message, isTerminalEvent)
+				emitStreamMessage(clientMessage, isTerminalEvent)
 			}
 		} else {
 			if responseField.Exists() && responseField.Type == gjson.JSON {

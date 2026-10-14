@@ -1,0 +1,321 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+)
+
+// ws_bridge（WebSocket 桥接）：与 http_bridge 对称，上游统一走 WS。
+// WS 入站与 ctx_pool 完全一致；本文件只处理 HTTP 入站——流式 /v1/responses
+// 请求经上下文池的上游 WSv2 发出（Forward → forwardOpenAIWSV2），以及让该
+// 路径在切号、保活、响应头与终态事件上对齐 HTTP 上游路径的行为。
+
+// shouldUseOpenAIWSBridgeForHTTPIngress 判定 HTTP 入站请求是否按 ws_bridge 走上游 WS。
+// 任一条件不满足时保持原行为（HTTP 入站一律走上游 HTTP）。
+func (s *OpenAIGatewayService) shouldUseOpenAIWSBridgeForHTTPIngress(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	decision OpenAIWSProtocolDecision,
+	body []byte,
+	responsesLite bool,
+) bool {
+	if s == nil || s.cfg == nil || c == nil || account == nil {
+		return false
+	}
+	if GetOpenAIClientTransport(c) != OpenAIClientTransportHTTP {
+		return false
+	}
+	wsCfg := s.cfg.Gateway.OpenAIWS
+	if !wsCfg.ModeRouterV2Enabled {
+		return false
+	}
+	if account.ResolveOpenAIResponsesWebSocketV2Mode(wsCfg.IngressModeDefault) != OpenAIWSIngressModeWSBridge {
+		return false
+	}
+	// 协议决策器仍是总闸：WS 总开关、oauth/apikey 开关、force_http、并发校验照常生效。
+	if decision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
+		return false
+	}
+	// WS 只能向 /responses 发 response.create：compact、/{id}/cancel 等子路径与原生压缩 v2
+	// 依赖 HTTP 端点语义；Lite 在 HTTP 上靠请求头标记，WS 分支未适配。
+	if responsesLite || openAIResponsesRequestPathSuffix(c) != "" || IsOpenAINativeCompactionV2(c) {
+		return false
+	}
+	values := gjson.GetManyBytes(body, "stream", "background", "previous_response_id")
+	// 仅流式：WS 分支对非流式客户端未实现 output 重建与 response.failed 切号。
+	// background 会被 WS payload 丢弃，客户端会拿到同步响应而非排队响应。
+	if !values[0].Bool() || values[1].Bool() {
+		return false
+	}
+	if isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body) {
+		return false
+	}
+	if account.IsOpenAIPassthroughEnabled() {
+		return false
+	}
+	// 插件接管的 OAuth 账号必须经插件出站（WS 入站对它们同样强制 http_bridge）。
+	if s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account) {
+		return false
+	}
+	// 与 WS 入站一致：首包超过 HTTP 桥接阈值且无续接时仍走 HTTP。
+	if s.shouldBridgeOpenAIWSHTTP(account, len(body), strings.TrimSpace(values[2].String())) {
+		return false
+	}
+	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+		return false
+	}
+	return s.resolveUpstreamProtocolFor(ctx, account, APIProtocolResponses, upstreamRoutingModel(account, body, "")) == APIProtocolResponses
+}
+
+// startOpenAIWSBridgeKeepalive 在首个语义输出前按 gateway.stream_keepalive_interval
+// 写 SSE 注释保活，避免长推理期间反向代理空闲断开（HTTP 上游路径同款）。
+// 保活字节计入 openAIStreamKeepaliveBytesKey，不阻止切号。
+//
+// 返回的 stop 会等待保活 goroutine 退出；调用方必须在首次写下游、修改响应头
+// 或读取 c.Writer 状态之前调用它，此后所有写入都只在调用方 goroutine 中进行。
+func (s *OpenAIGatewayService) startOpenAIWSBridgeKeepalive(ctx context.Context, c *gin.Context, flusher http.Flusher) (stop func()) {
+	interval := time.Duration(0)
+	if s != nil && s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+		interval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+	}
+	if interval <= 0 || c == nil || c.Writer == nil || flusher == nil {
+		return func() {}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n, err := c.Writer.Write([]byte(":\n\n"))
+				recordOpenAIStreamKeepaliveBytes(c, n)
+				if err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(done)
+			<-finished
+		})
+	}
+}
+
+// guardOpenAIWSBridgeClientTurnState 对客户端回带的 x-codex-turn-state 做与 HTTP
+// 上游路径相同的出站守卫：已知由其他账号铸造的值会被剥离。
+func (s *OpenAIGatewayService) guardOpenAIWSBridgeClientTurnState(c *gin.Context, account *Account, turnState string) string {
+	if strings.TrimSpace(turnState) == "" {
+		return ""
+	}
+	probe := http.Header{}
+	probe.Set(openAICodexTurnStateHeader, turnState)
+	s.guardOpenAICodexTurnStateEcho(c, account, probe)
+	return strings.TrimSpace(probe.Get(openAICodexTurnStateHeader))
+}
+
+// commitOpenAIWSBridgeStagedHeaders 在首个语义输出写下游前提交暂存的账号相关响应头。
+// 响应头已被保活注释提交时整体丢弃（与 HTTP 路径一致）；无 turn-state 时清除
+// writer 上可能残留的上一 failover attempt 的值。
+func (s *OpenAIGatewayService) commitOpenAIWSBridgeStagedHeaders(c *gin.Context, account *Account, staged http.Header) {
+	if c == nil || c.Writer == nil || c.Writer.Written() {
+		return
+	}
+	canonical := http.CanonicalHeaderKey(openAICodexTurnStateHeader)
+	state := extractOpenAICodexTurnState(staged)
+	if state == "" {
+		c.Writer.Header().Del(canonical)
+		return
+	}
+	c.Writer.Header().Set(canonical, state)
+	s.noteOpenAICodexTurnStateProvenance(c, account)
+}
+
+// clearOpenAIWSBridgeAttemptHeaders 清除本次 WS attempt 已设置但尚未提交的响应头，
+// 避免切号或错误响应继承 SSE Content-Type 与上一个账号的 turn-state。
+func clearOpenAIWSBridgeAttemptHeaders(c *gin.Context) {
+	if c == nil || c.Writer == nil || c.Writer.Written() {
+		return
+	}
+	h := c.Writer.Header()
+	for _, key := range []string{"Content-Type", "Cache-Control", "Connection", "X-Accel-Buffering", openAICodexTurnStateHeader} {
+		h.Del(key)
+	}
+}
+
+// openAIWSBridgeStreamOutput 为 ws_bridge 的 HTTP 客户端重建终态事件的 output、
+// 并对 error/response.failed 做客户端脱敏，与 HTTP 上游流式路径保持一致。
+type openAIWSBridgeStreamOutput struct {
+	accumulator  *apicompat.BufferedResponseAccumulator
+	doneItems    *responsesStreamOutputItems
+	imageOutputs []json.RawMessage
+	seenImages   map[string]struct{}
+}
+
+func newOpenAIWSBridgeStreamOutput() *openAIWSBridgeStreamOutput {
+	return &openAIWSBridgeStreamOutput{
+		accumulator:  apicompat.NewBufferedResponseAccumulator(),
+		doneItems:    newResponsesStreamOutputItems(),
+		imageOutputs: make([]json.RawMessage, 0, 1),
+		seenImages:   make(map[string]struct{}),
+	}
+}
+
+// prepare 按事件到达顺序观察输出并返回要下发给客户端的事件。
+func (o *openAIWSBridgeStreamOutput) prepare(eventType string, message []byte, clientOutputStarted bool) []byte {
+	if o == nil {
+		return message
+	}
+	if imageOutput, ok := extractImageGenerationOutputFromSSEData(message, o.seenImages); ok {
+		o.imageOutputs = append(o.imageOutputs, imageOutput)
+	}
+	o.doneItems.Observe(message)
+	if responsesStreamEventMayContributeToOutput(eventType) {
+		var streamEvent apicompat.ResponsesStreamEvent
+		if err := json.Unmarshal(message, &streamEvent); err == nil {
+			o.accumulator.ProcessEvent(&streamEvent)
+		}
+	}
+	if normalized, ok := normalizeResponsesStreamingTerminalOutput(message, o.accumulator, o.doneItems, o.imageOutputs); ok {
+		message = normalized
+	}
+	if sanitized, ok := sanitizeOpenAIResponseFailedEventForClient(message, eventType, clientOutputStarted); ok {
+		message = sanitized
+	}
+	return message
+}
+
+// newOpenAIWSBridgeEventFailoverError 对首个语义输出前的 error / response.failed 事件
+// 按 HTTP 上游流式路径的规则判定是否切号。返回 nil 表示按原样下发给客户端。
+// 账号副作用（限流、冷却、停用）由 WS 路径自身处理，这里不重复调用。
+func (s *OpenAIGatewayService) newOpenAIWSBridgeEventFailoverError(
+	c *gin.Context,
+	account *Account,
+	canonicalModel string,
+	eventType string,
+	payload []byte,
+	headers http.Header,
+) *UpstreamFailoverError {
+	if s == nil || account == nil {
+		return nil
+	}
+	message := extractOpenAISSEErrorMessage(payload)
+	if message == "" {
+		message = "Upstream response failed"
+	}
+	switch eventType {
+	case "error":
+		if !openAIStreamErrorEventShouldFailover(payload, message) {
+			return nil
+		}
+	case "response.failed":
+		if !openAIStreamFailedEventShouldFailover(payload, message) {
+			return nil
+		}
+	default:
+		return nil
+	}
+	statusCode := openAIStreamFailureStatus(payload, message)
+	message = s.recordOpenAIStreamUpstreamError(c, account, false, "", "failover", payload, message)
+	classificationHeaders := headers
+	if statusCode == http.StatusTooManyRequests {
+		// 流内 429 不能继承握手头里的全局配额快照（Spark OAuth 除外）。
+		classificationHeaders = openAIWSSemantic429Headers(account, canonicalModel, headers)
+	}
+	return s.newOpenAIAccountFailoverErrorWithClassificationHeaders(
+		account,
+		statusCode,
+		headers,
+		classificationHeaders,
+		payload,
+		message,
+		false,
+		openAIStreamFailedEventRetryableOnSameAccount(account, payload, message),
+	)
+}
+
+// newOpenAIWSBridgeFallbackFailoverError 把 WS 重试用尽后的失败映射为切号错误，
+// 对齐 HTTP 上游路径（传输错误与 5xx/401/429 均换号）。返回 nil 表示沿用原有处理：
+// 已写出语义输出、客户端已断开、或属于请求级错误（invalid_encrypted_content /
+// previous_response_not_found 仍以 400 返回客户端）。
+func (s *OpenAIGatewayService) newOpenAIWSBridgeFallbackFailoverError(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	canonicalModel string,
+	wsErr error,
+) *UpstreamFailoverError {
+	if s == nil || account == nil || wsErr == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
+	if openAIStreamClientOutputStarted(c, false) {
+		return nil
+	}
+	var fallbackErr *openAIWSFallbackError
+	if !errors.As(wsErr, &fallbackErr) || fallbackErr == nil {
+		return nil
+	}
+	switch strings.TrimPrefix(strings.TrimSpace(fallbackErr.Reason), "prewarm_") {
+	case "", "invalid_encrypted_content", "previous_response_not_found", "retry_backoff_canceled":
+		return nil
+	}
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(wsErr.Error()))
+	failoverErr := &UpstreamFailoverError{
+		StatusCode:   http.StatusBadGateway,
+		ResponseBody: openAITransportFailoverBody,
+	}
+	var dialErr *openAIWSDialError
+	if errors.As(fallbackErr.Err, &dialErr) && dialErr != nil {
+		switch statusCode := dialErr.StatusCode; {
+		case statusCode == http.StatusTooManyRequests:
+			// forwardOpenAIWSV2 已持久化拨号 429 的限流信号。
+			failoverErr = s.newOpenAIWSRateLimitFailoverError(account, dialErr.ResponseHeaders, nil, message)
+		case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+			shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, canonicalModel)
+			failoverErr = s.newOpenAIAccountFailoverError(account, statusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, message, shouldDisable, false)
+		case statusCode >= http.StatusInternalServerError:
+			// 冷却已由 handleOpenAIWSDialTransientFailure 处理。
+			failoverErr = s.newOpenAIAccountFailoverError(account, statusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, message, false, false)
+		}
+	}
+	if c != nil {
+		proxyID, proxyName := opsUpstreamWSProxyAttribution(account)
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            proxyID,
+			ProxyName:          proxyName,
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: failoverErr.StatusCode,
+			Kind:               "failover",
+			Message:            message,
+		})
+	}
+	return failoverErr
+}

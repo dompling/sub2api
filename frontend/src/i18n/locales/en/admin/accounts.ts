@@ -671,6 +671,7 @@ export default {
         wsModeCtxPool: 'Context Pool (ctx_pool)',
         wsModePassthrough: 'Passthrough (passthrough)',
         wsModeHttpBridge: 'HTTP Bridge (http_bridge)',
+        wsModeWsBridge: 'WebSocket Bridge (ws_bridge)',
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
         wsModeCtxPoolHint:
@@ -679,6 +680,8 @@ export default {
           'The gateway opens a separate upstream WS connection for each client session, without using a connection pool.',
         wsModeHttpBridgeHint:
           'The gateway converts client WS requests to upstream HTTP requests, then converts SSE streaming responses back into WS messages.',
+        wsModeWsBridgeHint:
+          'The gateway converts streaming client HTTP requests to upstream WS requests over pooled connections, then converts WS messages back into an SSE stream; WS requests behave the same as the context pool. Non-streaming requests and requests above the HTTP bridge threshold still use HTTP.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',

@@ -2203,6 +2203,14 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 		require.Equal(t, 7200, cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds)
 	})
 
+	t.Run("ingress_mode_default 接受 http_bridge 与 ws_bridge", func(t *testing.T) {
+		for _, mode := range []string{"http_bridge", "ws_bridge"} {
+			cfg := buildValid(t)
+			cfg.Gateway.OpenAIWS.IngressModeDefault = mode
+			require.NoError(t, cfg.Validate(), mode)
+		}
+	})
+
 	cases := []struct {
 		name    string
 		mutate  func(*Config)
@@ -2296,7 +2304,7 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.store_disabled_conn_mode",
 		},
 		{
-			name:    "ingress_mode_default 必须为 off|ctx_pool|passthrough|http_bridge",
+			name:    "ingress_mode_default 必须为 off|ctx_pool|passthrough|http_bridge|ws_bridge",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.IngressModeDefault = "invalid" },
 			wantErr: "gateway.openai_ws.ingress_mode_default",
 		},

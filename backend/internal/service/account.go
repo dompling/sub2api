@@ -2163,6 +2163,7 @@ const (
 	OpenAIWSIngressModeCtxPool     = "ctx_pool"
 	OpenAIWSIngressModePassthrough = "passthrough"
 	OpenAIWSIngressModeHTTPBridge  = "http_bridge"
+	OpenAIWSIngressModeWSBridge    = "ws_bridge"
 )
 
 func normalizeOpenAIWSIngressMode(mode string) string {
@@ -2175,6 +2176,8 @@ func normalizeOpenAIWSIngressMode(mode string) string {
 		return OpenAIWSIngressModePassthrough
 	case OpenAIWSIngressModeHTTPBridge:
 		return OpenAIWSIngressModeHTTPBridge
+	case OpenAIWSIngressModeWSBridge:
+		return OpenAIWSIngressModeWSBridge
 	case OpenAIWSIngressModeShared:
 		return OpenAIWSIngressModeShared
 	case OpenAIWSIngressModeDedicated:
@@ -2194,7 +2197,7 @@ func normalizeOpenAIWSIngressDefaultMode(mode string) string {
 	return OpenAIWSIngressModeCtxPool
 }
 
-// ResolveOpenAIResponsesWebSocketV2Mode 返回账号在 WSv2 ingress 下的有效模式（off/ctx_pool/passthrough）。
+// ResolveOpenAIResponsesWebSocketV2Mode 返回账号在 WSv2 ingress 下的有效模式（off/ctx_pool/passthrough/http_bridge/ws_bridge）。
 //
 // 优先级：
 // 1. 分类型 mode 新字段（string）

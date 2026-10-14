@@ -1288,7 +1288,7 @@ const DefaultOpenAIWSClientFirstMessageTimeoutSeconds = 30
 type GatewayOpenAIWSConfig struct {
 	// ModeRouterV2Enabled: 新版 WS mode 路由开关（默认 false；关闭时保持 legacy 行为）
 	ModeRouterV2Enabled bool `mapstructure:"mode_router_v2_enabled"`
-	// IngressModeDefault: ingress 默认模式（off/ctx_pool/passthrough/http_bridge）
+	// IngressModeDefault: ingress 默认模式（off/ctx_pool/passthrough/http_bridge/ws_bridge）
 	IngressModeDefault string `mapstructure:"ingress_mode_default"`
 	// ClientFirstMessageTimeoutSeconds bounds the total time to read and decompress
 	// the first client response.create message after the WebSocket upgrade.
@@ -3589,11 +3589,11 @@ func (c *Config) Validate() error {
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.Gateway.OpenAIWS.IngressModeDefault)); mode != "" {
 		switch mode {
-		case "off", "ctx_pool", "passthrough", "http_bridge":
+		case "off", "ctx_pool", "passthrough", "http_bridge", "ws_bridge":
 		case "shared", "dedicated":
-			slog.Warn("gateway.openai_ws.ingress_mode_default is deprecated, treating as ctx_pool; please update to off|ctx_pool|passthrough|http_bridge", "value", mode)
+			slog.Warn("gateway.openai_ws.ingress_mode_default is deprecated, treating as ctx_pool; please update to off|ctx_pool|passthrough|http_bridge|ws_bridge", "value", mode)
 		default:
-			return fmt.Errorf("gateway.openai_ws.ingress_mode_default must be one of off|ctx_pool|passthrough|http_bridge")
+			return fmt.Errorf("gateway.openai_ws.ingress_mode_default must be one of off|ctx_pool|passthrough|http_bridge|ws_bridge")
 		}
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.Gateway.OpenAIWS.StoreDisabledConnMode)); mode != "" {
