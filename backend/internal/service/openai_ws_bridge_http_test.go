@@ -32,6 +32,7 @@ type wsBridgeTestServer struct {
 	conns      atomic.Int32
 	requests   atomic.Int32
 	lastStream atomic.Bool
+	lastReq    atomic.Value
 	opts       wsBridgeTestServerOptions
 }
 
@@ -78,7 +79,9 @@ func newWSBridgeTestServerWithOptions(t *testing.T, opts wsBridgeTestServerOptio
 				return
 			}
 			srv.requests.Add(1)
-			srv.lastStream.Store(gjson.Get(requestToJSONString(request), "stream").Bool())
+			requestJSON := requestToJSONString(request)
+			srv.lastReq.Store(requestJSON)
+			srv.lastStream.Store(gjson.Get(requestJSON, "stream").Bool())
 			if connIndex <= srv.opts.closeFirstConns {
 				return
 			}
@@ -189,31 +192,32 @@ func TestShouldUseOpenAIWSBridgeForHTTPIngress(t *testing.T) {
 		body          []byte
 		responsesLite bool
 		want          bool
+		reason        string
 	}{
 		{name: "streaming ws_bridge request", want: true},
-		{name: "ws client transport", setup: func(c *gin.Context) { SetOpenAIClientTransport(c, OpenAIClientTransportWS) }},
-		{name: "mode router disabled", mutateCfg: func(cfg *config.Config) { cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = false }},
+		{name: "ws client transport", setup: func(c *gin.Context) { SetOpenAIClientTransport(c, OpenAIClientTransportWS) }, reason: "client_transport_not_http"},
+		{name: "mode router disabled", mutateCfg: func(cfg *config.Config) { cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = false }, reason: "mode_router_v2_disabled"},
 		{name: "ctx_pool account", mutateAccount: func(a *Account) {
 			a.Extra["openai_apikey_responses_websockets_v2_mode"] = OpenAIWSIngressModeCtxPool
-		}},
+		}, reason: "mode_not_ws_bridge"},
 		{name: "ws_bridge as ingress default", mutateCfg: func(cfg *config.Config) {
 			cfg.Gateway.OpenAIWS.IngressModeDefault = OpenAIWSIngressModeWSBridge
 		}, mutateAccount: func(a *Account) {
 			delete(a.Extra, "openai_apikey_responses_websockets_v2_mode")
 		}, want: true},
-		{name: "resolver chose http", decision: &OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportHTTPSSE}},
-		{name: "non-streaming request", body: []byte(`{"model":"gpt-5.1","stream":false,"input":"hello"}`)},
-		{name: "stream omitted", body: []byte(`{"model":"gpt-5.1","input":"hello"}`)},
-		{name: "background request", body: []byte(`{"model":"gpt-5.1","stream":true,"background":true,"input":"hello"}`)},
-		{name: "compact subpath", path: "/openai/v1/responses/compact"},
-		{name: "cancel subpath", path: "/openai/v1/responses/resp_1/cancel"},
-		{name: "native compaction v2", setup: MarkOpenAINativeCompactionV2},
-		{name: "responses lite", responsesLite: true},
-		{name: "account passthrough", mutateAccount: func(a *Account) { a.Extra["openai_passthrough"] = true }},
+		{name: "resolver chose http", decision: &OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportHTTPSSE}, reason: "decision_not_ws_v2"},
+		{name: "non-streaming request", body: []byte(`{"model":"gpt-5.1","stream":false,"input":"hello"}`), reason: "not_stream"},
+		{name: "stream omitted", body: []byte(`{"model":"gpt-5.1","input":"hello"}`), reason: "not_stream"},
+		{name: "background request", body: []byte(`{"model":"gpt-5.1","stream":true,"background":true,"input":"hello"}`), reason: "background"},
+		{name: "compact subpath", path: "/openai/v1/responses/compact", reason: "responses_subpath"},
+		{name: "cancel subpath", path: "/openai/v1/responses/resp_1/cancel", reason: "responses_subpath"},
+		{name: "native compaction v2", setup: MarkOpenAINativeCompactionV2, reason: "native_compaction_v2"},
+		{name: "responses lite", responsesLite: true, want: true},
+		{name: "account passthrough", mutateAccount: func(a *Account) { a.Extra["openai_passthrough"] = true }, reason: "passthrough_enabled"},
 		{name: "payload above http bridge threshold", mutateCfg: func(cfg *config.Config) {
 			cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
 			cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes = 8
-		}},
+		}, reason: "http_bridge_threshold"},
 		{name: "continuation above threshold stays on ws", mutateCfg: func(cfg *config.Config) {
 			cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
 			cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes = 8
@@ -248,6 +252,7 @@ func TestShouldUseOpenAIWSBridgeForHTTPIngress(t *testing.T) {
 			svc := newWSBridgeTestService(cfg, nil)
 			got := svc.shouldUseOpenAIWSBridgeForHTTPIngress(context.Background(), c, account, decision, body, tt.responsesLite)
 			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.reason, svc.openAIWSBridgeHTTPIngressRejectReason(context.Background(), c, account, decision, body, tt.responsesLite))
 		})
 	}
 }
@@ -289,6 +294,44 @@ func TestOpenAIWSBridge_Forward_StreamingHTTPIngressUsesUpstreamWS(t *testing.T)
 	owned, ownerErr := svc.ValidateOpenAIHTTPResponseOwner(context.Background(), wsBridgeTestGroupID, "resp_ws_1", wsBridgeTestUserID, wsBridgeTestAPIKeyID)
 	require.NoError(t, ownerErr)
 	require.True(t, owned, "ws_bridge 响应应绑定 HTTP 续接归属")
+}
+
+func TestOpenAIWSBridge_Forward_ResponsesLiteHTTPIngressUsesUpstreamWS(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wsServer := newWSBridgeTestServer(t, 0, wsBridgeTestCreatedEvent, wsBridgeTestItemDoneEvent, wsBridgeTestCompletedEvent)
+	cfg := newWSBridgeTestConfig()
+	upstream := newWSBridgeHTTPSSEUpstream()
+	svc := newWSBridgeTestService(cfg, upstream)
+	account := newWSBridgeTestAccount(wsServer.URL, OpenAIWSIngressModeWSBridge)
+	c, _ := newWSBridgeTestContext("/openai/v1/responses")
+	c.Request.Header.Set(responsesLiteHeader, "true")
+
+	body := []byte(`{"model":"gpt-5.1","stream":true,"input":[{"type":"input_text","text":"hello"}],"client_metadata":{"keep":"me"}}`)
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.OpenAIWSMode)
+	require.Nil(t, upstream.lastReq, "Lite 流式请求应走上游 WS")
+	require.Equal(t, int32(1), wsServer.requests.Load())
+
+	sent, _ := wsServer.lastReq.Load().(string)
+	require.True(t, isOpenAIResponsesLiteWebSocketPayload([]byte(sent)), "上游 WS payload 应带 Lite 标记: %s", sent)
+	require.Equal(t, "me", gjson.Get(sent, "client_metadata.keep").String(), "已有 client_metadata 应保留")
+}
+
+func TestSetOpenAIWSResponsesLiteMetadata(t *testing.T) {
+	t.Run("sets marker without mutating source metadata", func(t *testing.T) {
+		source := map[string]any{"keep": "me"}
+		payload := map[string]any{"model": "gpt-5.1", "client_metadata": source}
+		setOpenAIWSResponsesLiteMetadata(payload, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
+		require.True(t, isOpenAIResponsesLiteWebSocketPayload([]byte(requestToJSONString(payload))))
+		require.NotContains(t, source, responsesLiteWSMetadataKey)
+	})
+	t.Run("oauth mapped gpt-5.5 skips marker", func(t *testing.T) {
+		payload := map[string]any{"model": "gpt-5.5"}
+		setOpenAIWSResponsesLiteMetadata(payload, &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth})
+		require.NotContains(t, payload, "client_metadata")
+	})
 }
 
 func TestOpenAIWSBridge_Forward_CtxPoolHTTPIngressStaysHTTP(t *testing.T) {

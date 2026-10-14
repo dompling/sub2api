@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 // ws_bridge（WebSocket 桥接）：与 http_bridge 对称，上游统一走 WS。
@@ -29,52 +31,90 @@ func (s *OpenAIGatewayService) shouldUseOpenAIWSBridgeForHTTPIngress(
 	body []byte,
 	responsesLite bool,
 ) bool {
+	reason := s.openAIWSBridgeHTTPIngressRejectReason(ctx, c, account, decision, body, responsesLite)
+	if reason == "" {
+		return true
+	}
+	// 只为配置成 ws_bridge 的账号记录拒绝原因，其他账号本就不走桥接。
+	if s != nil && s.cfg != nil && account != nil &&
+		account.ResolveOpenAIResponsesWebSocketV2Mode(s.cfg.Gateway.OpenAIWS.IngressModeDefault) == OpenAIWSIngressModeWSBridge {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		logger.FromContext(ctx).Info("openai.ws_bridge_http_rejected",
+			zap.Int64("account_id", account.ID),
+			zap.String("reason", reason),
+			zap.String("decision_transport", string(decision.Transport)),
+			zap.String("decision_reason", decision.Reason),
+		)
+	}
+	return false
+}
+
+// openAIWSBridgeHTTPIngressRejectReason 返回 HTTP 入站请求不走 ws_bridge 的原因；空串表示放行。
+func (s *OpenAIGatewayService) openAIWSBridgeHTTPIngressRejectReason(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	decision OpenAIWSProtocolDecision,
+	body []byte,
+	responsesLite bool,
+) string {
 	if s == nil || s.cfg == nil || c == nil || account == nil {
-		return false
+		return "missing_context"
 	}
 	if GetOpenAIClientTransport(c) != OpenAIClientTransportHTTP {
-		return false
+		return "client_transport_not_http"
 	}
 	wsCfg := s.cfg.Gateway.OpenAIWS
 	if !wsCfg.ModeRouterV2Enabled {
-		return false
+		return "mode_router_v2_disabled"
 	}
 	if account.ResolveOpenAIResponsesWebSocketV2Mode(wsCfg.IngressModeDefault) != OpenAIWSIngressModeWSBridge {
-		return false
+		return "mode_not_ws_bridge"
 	}
 	// 协议决策器仍是总闸：WS 总开关、oauth/apikey 开关、force_http、并发校验照常生效。
 	if decision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
-		return false
+		return "decision_not_ws_v2"
 	}
 	// WS 只能向 /responses 发 response.create：compact、/{id}/cancel 等子路径与原生压缩 v2
-	// 依赖 HTTP 端点语义；Lite 在 HTTP 上靠请求头标记，WS 分支未适配。
-	if responsesLite || openAIResponsesRequestPathSuffix(c) != "" || IsOpenAINativeCompactionV2(c) {
-		return false
+	// 依赖 HTTP 端点语义。Lite 请求头由 forwardOpenAIWSV2 转成 client_metadata 标记。
+	if openAIResponsesRequestPathSuffix(c) != "" {
+		return "responses_subpath"
+	}
+	if IsOpenAINativeCompactionV2(c) {
+		return "native_compaction_v2"
 	}
 	values := gjson.GetManyBytes(body, "stream", "background", "previous_response_id")
 	// 仅流式：WS 分支对非流式客户端未实现 output 重建与 response.failed 切号。
 	// background 会被 WS payload 丢弃，客户端会拿到同步响应而非排队响应。
-	if !values[0].Bool() || values[1].Bool() {
-		return false
+	if !values[0].Bool() {
+		return "not_stream"
+	}
+	if values[1].Bool() {
+		return "background"
 	}
 	if isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body) {
-		return false
+		return "compat_messages_bridge"
 	}
 	if account.IsOpenAIPassthroughEnabled() {
-		return false
+		return "passthrough_enabled"
 	}
 	// 插件接管的 OAuth 账号必须经插件出站（WS 入站对它们同样强制 http_bridge）。
 	if s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account) {
-		return false
+		return "plugin_route"
 	}
 	// 与 WS 入站一致：首包超过 HTTP 桥接阈值且无续接时仍走 HTTP。
 	if s.shouldBridgeOpenAIWSHTTP(account, len(body), strings.TrimSpace(values[2].String())) {
-		return false
+		return "http_bridge_threshold"
 	}
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
-		return false
+		return "raw_chat_completions"
 	}
-	return s.resolveUpstreamProtocolFor(ctx, account, APIProtocolResponses, upstreamRoutingModel(account, body, "")) == APIProtocolResponses
+	if s.resolveUpstreamProtocolFor(ctx, account, APIProtocolResponses, upstreamRoutingModel(account, body, "")) != APIProtocolResponses {
+		return "upstream_protocol_not_responses"
+	}
+	return ""
 }
 
 // startOpenAIWSBridgeKeepalive 在首个语义输出前按 gateway.stream_keepalive_interval

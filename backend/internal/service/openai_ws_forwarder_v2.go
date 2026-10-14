@@ -78,6 +78,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		turnState = s.guardOpenAIWSBridgeClientTurnState(c, account, turnState)
 	}
 	setOpenAIWSTurnMetadata(payload, turnMetadata)
+	if bridgeHTTPClient && c != nil && c.Request != nil && account.IsOpenAI() && isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
+		setOpenAIWSResponsesLiteMetadata(payload, account)
+	}
 	applyStagedCodexFingerprintClientMetadata(c, account, payload)
 	previousResponseID := openAIWSPayloadString(payload, "previous_response_id")
 	previousResponseIDKind := ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
