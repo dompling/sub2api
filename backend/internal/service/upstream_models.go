@@ -918,13 +918,6 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 		return s.buildGeminiUpstreamModelsRequest(ctx, account)
 	case account.IsAnthropic():
 		return s.buildAnthropicUpstreamModelsRequest(ctx, account)
-	case account.Platform == PlatformAdobe:
-		// Adobe 中转号（apikey + base_url）是 OpenAI 形上游，复用 /v1/models 探测；
-		// Cookie 号没有静态 Key，无上游模型列表可拉。
-		if !isAdobeRelayAccount(account) {
-			return nil, newUpstreamModelSyncConfigError("Adobe upstream model sync requires an API key relay account with a base URL", nil)
-		}
-		return buildOpenAIAPIKeyModelsRequest(ctx, account, s.validateUpstreamBaseURL)
 	case account.Platform == PlatformKiro:
 		return s.buildKiroRelayModelsRequest(ctx, account)
 	default:

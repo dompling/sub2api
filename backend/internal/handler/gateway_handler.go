@@ -15,7 +15,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/adobe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -83,7 +82,6 @@ type GatewayHandler struct {
 	geminiCachedContentService *service.GeminiCachedContentService
 	concurrencyHelper          *ConcurrencyHelper
 	userMsgQueueHelper         *UserMsgQueueHelper
-	adobeImageService          *service.AdobeImageService
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	maxAccountSwitchesGemini   int
@@ -107,7 +105,6 @@ func NewGatewayHandler(
 	promptRuleService *service.PromptRuleService,
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
-	adobeImageService *service.AdobeImageService,
 	cfg *config.Config,
 	settingService *service.SettingService,
 ) *GatewayHandler {
@@ -145,7 +142,6 @@ func NewGatewayHandler(
 		contentModerationService:  contentModerationService,
 		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
 		userMsgQueueHelper:        umqHelper,
-		adobeImageService:         adobeImageService,
 		imageLimiter:              sharedImageConcurrencyLimiter,
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
@@ -1212,6 +1208,12 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
 		platform = forcedPlatform
 	}
+	// A group left on a removed platform serves nothing; advertise nothing
+	// instead of falling through to the Claude defaults below.
+	if platform != "" && !domain.IsGroupPlatform(platform) {
+		writeModelsList(c, platform, []string{})
+		return
+	}
 
 	if platform == service.PlatformOpenAI && apiKey != nil && apiKey.Group != nil &&
 		apiKey.Group.Platform == service.PlatformOpenAI && apiKey.Group.CodexModelsManifestConfig.Enabled {
@@ -1571,9 +1573,6 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return ids
 	case service.PlatformAnthropic:
 		return claude.DefaultModelIDs()
-	case service.PlatformAdobe:
-		// 修 bug：Step 8 之前这里没有 adobe 分支，`/v1/models` 会走 default: 分支返回 claude 模型。
-		return adobe.ImageModelIDs()
 	case service.PlatformGrok:
 		return xai.DefaultModelIDs()
 	case service.PlatformOpenCodeGo:

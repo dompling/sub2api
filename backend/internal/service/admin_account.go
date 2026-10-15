@@ -485,6 +485,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if !isServableAccountPlatform(input.Platform) {
+		return nil, infraerrors.BadRequest("ACCOUNT_PLATFORM_UNSUPPORTED", fmt.Sprintf("unsupported account platform: %s", input.Platform))
+	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err

@@ -673,7 +673,7 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	if a.Credentials == nil {
 		// 部分平台在未显式配置 model_mapping 时仍应使用默认映射，
 		// 以限制可调度/可转发的模型集合。
-		if defaults := defaultModelMappingForAccount(a); defaults != nil {
+		if defaults := defaultModelMappingForPlatform(a.Platform); defaults != nil {
 			return defaults
 		}
 		if a.Platform == domain.PlatformGrok {
@@ -687,7 +687,7 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		if a.IsGeminiGoogleOne() {
 			return geminicli.GoogleOneModelMapping()
 		}
-		if defaults := defaultModelMappingForAccount(a); defaults != nil {
+		if defaults := defaultModelMappingForPlatform(a.Platform); defaults != nil {
 			return defaults
 		}
 		if a.Platform == domain.PlatformGrok {
@@ -733,7 +733,7 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	if a.IsGeminiGoogleOne() {
 		return geminicli.GoogleOneModelMapping()
 	}
-	if defaults := defaultModelMappingForAccount(a); defaults != nil {
+	if defaults := defaultModelMappingForPlatform(a.Platform); defaults != nil {
 		return defaults
 	}
 	if a.Platform == domain.PlatformGrok {
@@ -748,8 +748,6 @@ func defaultModelMappingForPlatform(platform string) map[string]string {
 		return domain.DefaultAntigravityModelMapping
 	case domain.PlatformKiro:
 		return domain.DefaultKiroModelMapping
-	case domain.PlatformAdobe:
-		return domain.DefaultAdobeModelMapping
 	default:
 		return nil
 	}
@@ -1453,12 +1451,8 @@ func (a *Account) IsOpenAIApiKey() bool {
 
 // GetOpenAIBaseURL 解析 OpenAI 协议族账号的上游 base_url。
 // 适用 openai、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）与 OpenCode Go；
-// grok 走 GetGrokBaseURL，此处对 grok 返回 "" 以保持原有行为。Adobe 中转号（apikey + base_url）走 OpenAI
-// 出图转发，必须返回它自己的 base_url，否则会落到 api.openai.com。
+// grok 走 GetGrokBaseURL，此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	if isAdobeRelayAccount(a) {
-		return strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
-	}
 	if !a.IsOpenAI() && !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
@@ -1794,15 +1788,11 @@ func (a *Account) GetOpenAIApiKey() string {
 // GetOpenAIProtocolAPIKey 返回 OpenAI 协议族 APIKey 账号的密钥。
 // 覆盖 openai 原生账号、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）
 // 以及 OpenCode Go 账号，供转发鉴权、模型列表同步等协议族共用路径使用。
-// Adobe 中转号（apikey + base_url）走 OpenAI 出图转发，同样返回其 api_key。
 // 注意 IsOpenAIApiKey 语义上仅指 openai 平台账号，调度倍率/WS 能力门控
 // 继续以其为准，不受本方法影响。
 func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
-	}
-	if isAdobeRelayAccount(a) {
-		return a.GetCredential("api_key")
 	}
 	if a.IsMultiProtocolAPIKey() {
 		if a.Type != AccountTypeAPIKey {

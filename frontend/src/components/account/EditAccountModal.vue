@@ -50,8 +50,6 @@
                     ? 'https://cloudcode-pa.googleapis.com'
                     : account.platform === 'kiro'
                       ? 'https://your-relay.example.com'
-                    : account.platform === 'adobe'
-                      ? 'https://your-relay.example.com'
                     : account.platform === 'grok'
                       ? 'https://api.x.ai/v1'
                       : 'https://api.anthropic.com'
@@ -829,9 +827,9 @@
         </div>
       </div>
 
-      <!-- OpenAI / Kiro / Grok / Adobe OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立区域) -->
+      <!-- OpenAI / Kiro / Grok OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
-        v-if="(account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'adobe') && account.type === 'oauth'"
+        v-if="(account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok') && account.type === 'oauth'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="oauth-model-mapping-section"
       >
@@ -3586,7 +3584,6 @@ const baseUrlHint = computed(() => {
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   // Kiro 编辑表单仅对中转账号显示 base_url 字段(直连账号隐藏),故用中转提示文案。
   if (props.account.platform === 'kiro') return t('admin.accounts.kiro.relayBaseUrlHint')
-  if (props.account.platform === 'adobe') return t('admin.accounts.adobe.relayBaseUrlHint')
   if (props.account.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
 })
@@ -4346,7 +4343,6 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'openai') return 'https://api.openai.com'
   if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
   if (props.account?.platform === 'kiro') return ''
-  if (props.account?.platform === 'adobe') return ''
   if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
   if (props.account?.platform === 'typesafe') return 'https://api.typesafe.ai'
   // CN 供应商：按当前模式/协议回落到官方预设（清空输入框提交时使用），
@@ -4807,8 +4803,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : newAccount.platform === 'kiro'
             ? ''
-          : newAccount.platform === 'adobe'
-            ? ''
           : newAccount.platform === 'grok'
             ? 'https://api.x.ai/v1'
             : newAccount.platform === 'typesafe'
@@ -4903,19 +4897,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
             : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 
-    // Load model mappings for OpenAI/Kiro/Grok/Adobe OAuth accounts
+    // Load model mappings for OpenAI/Kiro/Grok OAuth accounts
     kiroUpstreamIDs.value = {}
     if (newAccount.platform === 'kiro' && newAccount.credentials) {
       const oauthCredentials = newAccount.credentials as Record<string, unknown>
       loadModelRestrictionFromMapping(oauthCredentials.model_mapping as Record<string, unknown> | undefined, {
         kiroDirect: true
       })
-    } else if (newAccount.platform === 'adobe' && newAccount.credentials) {
-      // Adobe 与 openai/grok 一样走通用的白名单/映射拆分：splitModelMappingObject
-      // 把恒等对归入白名单、非恒等对归入映射。存量账号那份默认别名全是非恒等对，
-      // 于是自动开在映射模式并逐条列出——数据不变，只是多了一个可切到白名单的按钮。
-      const oauthCredentials = newAccount.credentials as Record<string, unknown>
-      loadModelRestrictionFromMapping(oauthCredentials.model_mapping as Record<string, unknown> | undefined)
     } else if ((newAccount.platform === 'openai' || newAccount.platform === 'grok') && newAccount.credentials) {
       const oauthCredentials = newAccount.credentials as Record<string, unknown>
       loadModelRestrictionFromMapping(oauthCredentials.model_mapping as Record<string, unknown> | undefined)
@@ -5932,27 +5920,6 @@ const handleSubmit = async () => {
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
 
       const modelMapping = buildModelRestrictionMapping()
-      if (modelMapping) {
-        newCredentials.model_mapping = modelMapping
-      } else {
-        delete newCredentials.model_mapping
-      }
-
-      updatePayload.credentials = newCredentials
-    }
-
-    // Adobe OAuth: persist model restriction to credentials
-    // 白名单与映射行都空 => 删掉 model_mapping，回落到后端 DefaultAdobeModelMapping。
-    if (props.account.platform === 'adobe') {
-      const currentCredentials = (updatePayload.credentials as Record<string, unknown>) ||
-        ((props.account.credentials as Record<string, unknown>) || {})
-      const newCredentials: Record<string, unknown> = { ...currentCredentials }
-
-      const modelMapping = buildModelMappingObject(
-        modelRestrictionMode.value,
-        allowedModels.value,
-        modelMappings.value
-      )
       if (modelMapping) {
         newCredentials.model_mapping = modelMapping
       } else {

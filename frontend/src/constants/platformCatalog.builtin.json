@@ -42,12 +42,6 @@
       "litellm_provider": "xai"
     },
     {
-      "id": "adobe",
-      "display_name": "Adobe",
-      "gateway": "anthropic",
-      "cn_provider": false
-    },
-    {
       "id": "kimi",
       "display_name": "Kimi",
       "gateway": "openai",
@@ -299,7 +293,6 @@
     "antigravity",
     "kiro",
     "grok",
-    "adobe",
     "kimi",
     "zhipu",
     "deepseek",

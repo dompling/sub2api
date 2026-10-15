@@ -13,7 +13,6 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/adobe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -406,9 +405,6 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return ids
 	case PlatformGrok:
 		return xai.DefaultModelIDs()
-	case PlatformAdobe:
-		// 只给图像族：视频还没接线（见 adobe.ImageModelIDs 的注释）。
-		return adobe.ImageModelIDs()
 	case PlatformOpenCodeGo:
 		return DefaultOpenCodeGoModelIDs()
 	case PlatformTypeSafe:
@@ -427,11 +423,7 @@ func defaultModelsListCandidateIDs(platform string) []string {
 func defaultAllowImageGenerationForPlatform(platform string) bool {
 	// Grok image and video generation routes share the legacy image-generation gate.
 	// Older clients send the false zero value, so Grok groups must default enabled.
-	//
-	// Adobe groups exist solely to serve image generation, so they must default
-	// enabled for the same reason: a false zero value from an older client would
-	// otherwise make every request fail the gate.
-	return platform == PlatformGrok || platform == PlatformAdobe
+	return platform == PlatformGrok
 }
 
 func compositeDefaultModelsListCandidateIDs() []string {

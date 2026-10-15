@@ -24,9 +24,6 @@ const (
 	PlatformAntigravity = "antigravity"
 	PlatformKiro        = "kiro"
 	PlatformGrok        = "grok"
-	// Adobe Firefly（图像生成）。与其它平台不同，它不是 OpenAI 兼容上游，
-	// 而是由 internal/pkg/adobe 直连 Adobe 的 3p 端点后合成 OpenAI 形状的响应。
-	PlatformAdobe = "adobe"
 	// 国产 OpenAI 兼容供应商（经 OpenAI 网关转发，按 Chat Completions 协议）。
 	PlatformKimi     = "kimi"     // Kimi (月之暗面 / Moonshot)
 	PlatformZhipu    = "zhipu"    // 智谱 GLM (bigmodel)
@@ -211,48 +208,6 @@ var DefaultKiroModelMapping = map[string]string{
 	"claude-sonnet-4-5-20250929-thinking": "claude-sonnet-4.5",
 	"claude-haiku-4-5-20251001":           "claude-haiku-4.5",
 	"claude-haiku-4-5-20251001-thinking":  "claude-haiku-4.5",
-}
-
-// DefaultAdobeModelMapping 是 Adobe 平台的默认模型映射。
-// 键为对外暴露/允许请求的模型名，值为 internal/pkg/adobe 的族级模型 id。
-//
-// 只用精确键，不写通配符：机制本身支持通配（见 service.matchWildcardMappingResult），
-// 留给用户按账号自配，默认表保持可预测。
-//
-// firefly-* 原名也必须列进来：model_mapping 非空时是严格白名单，
-// 不列的话显式请求 firefly-gpt-image-2 反而会被挡掉。
-var DefaultAdobeModelMapping = map[string]string{
-	// gpt-image 家族。sunburst 是 UI 展示名（对应上游 modelVersion=gpt-image-2.5-prism）。
-	"gpt-image-2":            "firefly-gpt-image-2",
-	"gpt-image-1.5":          "firefly-gpt-image-1.5",
-	"gpt-image-2.5-flare":    "firefly-gpt-image-2-5-flare",
-	"gpt-image-2.5-prism":    "firefly-gpt-image-2-5-prism",
-	"gpt-image-2.5-sunburst": "firefly-gpt-image-2-5-prism",
-	// 更早的 gpt-image 名字：Adobe 侧没有对应版本，一律落 v2；参考实现 GPT2Image-Pro 也是同样处理。
-	"gpt-image":        "firefly-gpt-image-2",
-	"gpt-image-1":      "firefly-gpt-image-2",
-	"gpt-image-1-mini": "firefly-gpt-image-2",
-	// Google Gemini 生图：对外与 Gemini 渠道同名；内部仍落到 Firefly banana 族。
-	// Adobe 上 3-pro-image 不要折成 3.1——Firefly 里 Pro 与 Banana 2 是两个 version。
-	"gemini-2.5-flash-image":         "firefly-nano-banana",
-	"gemini-2.5-flash-image-preview": "firefly-nano-banana",
-	"gemini-3-pro-image":             "firefly-nano-banana-pro",
-	"gemini-3-pro-image-preview":     "firefly-nano-banana-pro",
-	"gemini-3.1-flash-image":         "firefly-nano-banana2",
-	"gemini-3.1-flash-image-preview": "firefly-nano-banana2",
-	// nano-banana* 是线上已在用的历史别名，继续可请求，不进 /v1/models。
-	"nano-banana-pro": "firefly-nano-banana-pro",
-	"nano-banana":     "firefly-nano-banana",
-	"nano-banana2":    "firefly-nano-banana2",
-	// Step 7 新家族别名
-	"flux-pro":          "firefly-flux-pro",
-	"flux-ultra":        "firefly-flux-ultra",
-	"imagen-4":          "firefly-imagen-4",
-	"imagen-4-fast":     "firefly-imagen-4-fast",
-	"gpt-4o-image":      "firefly-gpt-4o-image",
-	"runway-gen4-image": "firefly-runway-gen4-image",
-	// Step 8：所有 firefly-* 左侧的直通条目已删除。用户面看到的都是干净外部名（见 adobe.ImageModelIDs），
-	// 直接请求内部族 id（如 firefly-imagen-4）将被 IsModelSupported 判为不支持——这是有意的护栏。
 }
 
 // DefaultBedrockModelMapping 是 AWS Bedrock 平台的默认模型映射

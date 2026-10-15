@@ -1449,19 +1449,6 @@ export interface AntigravityModelQuota {
   reset_time: string  // 重置时间 ISO8601
 }
 
-export interface AdobeCreditProgress {
-  current_usage: number
-  usage_limit: number
-  percentage_used: number
-}
-
-export interface AdobeCreditPool {
-  name: string
-  total?: number | null
-  used?: number | null
-  available?: number | null
-}
-
 export interface KiroCreditProgress {
   current_usage: number
   usage_limit: number
@@ -1560,12 +1547,6 @@ export interface AccountUsageInfo {
   kiro_runtime_state?: string | null
   kiro_runtime_reason?: string | null
   kiro_runtime_reset_at?: string | null
-
-  // Adobe credits/balance 快照（Step 6）：planCap 是不透明字符串（目前只见过 FREE）
-  adobe_plan_cap?: string | null
-  adobe_credit?: AdobeCreditProgress | null
-  adobe_credit_pools?: AdobeCreditPool[] | null
-  adobe_credit_reset_at?: string | null
 
   // Antigravity 403 forbidden 状态
   is_forbidden?: boolean

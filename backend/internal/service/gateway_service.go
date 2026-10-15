@@ -811,7 +811,6 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
-	adobeTokenProvider    *AdobeTokenProvider
 }
 
 // NewGatewayService creates a new GatewayService
@@ -835,7 +834,6 @@ func NewGatewayService(
 	deferredService *DeferredService,
 	claudeTokenProvider *ClaudeTokenProvider,
 	kiroTokenProvider *KiroTokenProvider,
-	adobeTokenProvider *AdobeTokenProvider,
 	kiroCooldownStore KiroCooldownStore,
 	sessionLimitCache SessionLimitCache,
 	rpmCache RPMCache,
@@ -886,10 +884,6 @@ func NewGatewayService(
 		compositeResolver:     compositeResolver,
 		balanceNotifyService:  balanceNotifyService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
-		adobeTokenProvider:    adobeTokenProvider,
-	}
-	if svc.adobeTokenProvider == nil {
-		svc.adobeTokenProvider = NewAdobeTokenProvider(accountRepo, nil)
 	}
 	if compositeResolver != nil {
 		compositeResolver.SetModelOwnershipResolver(svc.resolveCompositeModelOwnership)
@@ -1439,14 +1433,6 @@ func (s *GatewayService) getOAuthToken(ctx context.Context, account *Account) (s
 		return accessToken, "oauth", nil
 	}
 
-	if account.Platform == PlatformAdobe && account.Type == AccountTypeOAuth {
-		accessToken, err := s.getAdobeOAuthToken(ctx, account)
-		if err != nil {
-			return "", "", err
-		}
-		return accessToken, "oauth", nil
-	}
-
 	// 其他情况（Gemini 有自己的 TokenProvider，setup-token 类型等）直接从账号读取
 	accessToken := account.GetCredential("access_token")
 	if accessToken == "" {
@@ -1658,14 +1644,13 @@ func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, gro
 		return CompositeModelOwnership{}, err
 	}
 
-	sharedGeminiImage := IsCompositeSharedGeminiImageModel(model)
 	platforms := make(map[string]struct{})
 	for _, account := range accounts {
 		platform := strings.TrimSpace(account.Platform)
 		if !isConcreteRequestPlatform(platform) {
 			continue
 		}
-		if !explicitModelMappingClaims(account, model) && !(sharedGeminiImage && defaultMappingClaimsSharedGeminiImage(&account, model)) {
+		if !explicitModelMappingClaims(account, model) {
 			continue
 		}
 		platforms[platform] = struct{}{}
@@ -1685,18 +1670,6 @@ func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, gro
 		s.modelsListCache.Set(cacheKey, ownership, s.modelsListCacheTTL)
 	}
 	return ownership, nil
-}
-
-// defaultMappingClaimsSharedGeminiImage 让 Gemini/Adobe 同名生图模型按账号的
-// 实际可服务范围（含默认映射）声明归属：分组里只有 Adobe 号时 /v1beta 请求
-// 能落到 Adobe，而不是被 composite 的 Gemini 兜底吞掉。
-func defaultMappingClaimsSharedGeminiImage(account *Account, model string) bool {
-	switch account.Platform {
-	case PlatformGemini, PlatformAntigravity, PlatformAdobe:
-		return account.IsModelSupported(model)
-	default:
-		return false
-	}
 }
 
 func explicitModelMappingClaims(account Account, model string) bool {

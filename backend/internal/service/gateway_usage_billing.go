@@ -651,7 +651,6 @@ type recordUsageOpts struct {
 	// Kiro 账号在上游返回 auto 等无法定价模型时使用保守计费兜底。
 	IsKiroAccount bool
 	// ImageBillingPlatform 是出图按次兜底价的平台隔离轴（账号 platform）。
-	// 仅 adobe 套 Firefly 分档；空值与 openai/gemini 等不得按模型名命中 Adobe 表。
 	ImageBillingPlatform string
 }
 

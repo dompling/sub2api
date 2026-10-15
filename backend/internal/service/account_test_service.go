@@ -159,8 +159,6 @@ type AccountTestService struct {
 	// grokWSDialer is optional; realtime account tests use the default OpenAI-style
 	// WS dialer when nil (supports proxy + coder/websocket handshake).
 	grokWSDialer openAIWSClientDialer
-	// adobeTokenProvider 为 nil 时 Adobe 测试路径按需构造本地 provider。
-	adobeTokenProvider *AdobeTokenProvider
 }
 
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
@@ -172,13 +170,6 @@ func (s *AccountTestService) SetSettingService(settingService *SettingService) {
 func (s *AccountTestService) SetPluginManager(pluginManager *PluginManager) {
 	if s != nil {
 		s.pluginManager = pluginManager
-	}
-}
-
-// SetAdobeTokenProvider 注入与网关共享 OAuthRefreshAPI 的 Adobe token provider。
-func (s *AccountTestService) SetAdobeTokenProvider(provider *AdobeTokenProvider) {
-	if s != nil {
-		s.adobeTokenProvider = provider
 	}
 }
 
@@ -396,6 +387,12 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return nil
 	}
 
+	// Rows left behind by a removed platform must not fall through to the Claude
+	// fallback below, which would send their stored credentials to Anthropic.
+	if account.Platform != "" && !isServableAccountPlatform(account.Platform) {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account platform: %s", account.Platform))
+	}
+
 	// Route to platform-specific test method
 	// 按入站协议分流的多协议供应商（国产厂商等）：按账号协议选测试路径。
 	if account.RoutesProtocolByInbound() {
@@ -429,12 +426,6 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if isKiroDirectModeAccount(account) {
 		return s.testKiroAccountConnection(c, account, modelID)
-	}
-
-	// Adobe 是文生图渠道，与下面 Claude 兜底的「发一条 prompt 收流式文本」协议不通。
-	// 改前它会落到 testClaudeAccountConnection，拿 IMS token 去打 api.anthropic.com。
-	if account.Platform == PlatformAdobe {
-		return s.testAdobeAccountConnection(c, account, modelID, prompt)
 	}
 
 	// 按模型分流的多模型聚合平台（OpenCode、Command Code 等）。

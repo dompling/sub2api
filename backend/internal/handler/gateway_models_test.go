@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/adobe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -119,7 +118,6 @@ func newGatewayModelsHandlerForTest(repo service.AccountRepository, routeRepo ..
 			nil,      // deferredService
 			nil,      // claudeTokenProvider
 			nil,      // kiroTokenProvider
-			nil,      // adobeTokenProvider
 			nil,      // kiroCooldownStore
 			nil,      // sessionLimitCache
 			nil,      // rpmCache
@@ -203,14 +201,8 @@ func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {
 	require.Contains(t, compositeIDs, antigravityIDs[0])
 }
 
-func TestDefaultModelIDsForCompositeIncludesAdobeAndOmitsKiro(t *testing.T) {
-	adobeIDs := adobe.ImageModelIDs()
-	require.NotEmpty(t, adobeIDs)
-
+func TestDefaultModelIDsForCompositeOmitsKiro(t *testing.T) {
 	compositeIDs := defaultModelIDsForPlatform(service.PlatformComposite)
-	require.Contains(t, compositeIDs, adobeIDs[0])
-	require.Contains(t, compositeIDs, "gemini-3-pro-image")
-	require.NotContains(t, compositeIDs, "nano-banana-pro")
 
 	// Kiro is deliberately omitted from the composite static fallback: its
 	// claude-*/gpt-* model names collide with Anthropic/OpenAI. claude-opus-4-8-thinking
@@ -1962,4 +1954,36 @@ func TestGatewayModels_CompositeCodexRouteLookupErrorKeepsFallback(t *testing.T)
 			}
 		})
 	}
+}
+
+// A group left on a removed platform (old migrations still allow "adobe" in the
+// CHECK constraint) must not advertise any models, and its leftover accounts
+// must not leak their mappings into the list.
+func TestGatewayModels_RemovedPlatformGroupListsNothing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(21)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: {{ID: 1, Platform: "adobe", Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-image-2": "firefly-gpt-image-2"},
+				}}},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: "adobe"},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.Data)
 }

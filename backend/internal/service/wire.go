@@ -237,7 +237,6 @@ func ProvideAccountUsageService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	kiroTokenProvider *KiroTokenProvider,
-	adobeTokenProvider *AdobeTokenProvider,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -253,7 +252,6 @@ func ProvideAccountUsageService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
-	service.SetAdobeTokenProvider(adobeTokenProvider)
 	return service.SetKiroTokenProvider(kiroTokenProvider)
 }
 
@@ -270,7 +268,6 @@ func ProvideAccountTestService(
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
 	pluginManager *PluginManager,
-	adobeTokenProvider *AdobeTokenProvider,
 ) *AccountTestService {
 	service := NewAccountTestService(
 		accountRepo,
@@ -287,7 +284,6 @@ func ProvideAccountTestService(
 	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
-	service.SetAdobeTokenProvider(adobeTokenProvider)
 	return service
 }
 
@@ -385,12 +381,6 @@ func ProvideKiroTokenProvider(
 	p.SetRefreshAPI(refreshAPI, executor)
 	p.SetRefreshPolicy(GeminiProviderRefreshPolicy())
 	return p
-}
-
-// ProvideAdobeTokenProvider creates AdobeTokenProvider sharing the OAuthRefreshAPI
-// singleton, so request-path and background refreshes serialize on the same locks.
-func ProvideAdobeTokenProvider(accountRepo AccountRepository, refreshAPI *OAuthRefreshAPI) *AdobeTokenProvider {
-	return NewAdobeTokenProvider(accountRepo, refreshAPI)
 }
 
 func ProvideKiroCooldownStore(redisClient *redis.Client) KiroCooldownStore {
@@ -749,14 +739,6 @@ func ProvideImageTaskService(store ImageTaskStore, settings *ImageStorageSetting
 	return NewImageTaskServiceWithResolver(store, settings.Resolver(), defaultImageTaskTTL, defaultImageTaskExecutionTimeout)
 }
 
-// ProvideAdobeImageService 构造 Adobe 出图服务。
-//
-// 与异步图片任务不同，对象存储对 Adobe 只是「返 URL 还是返 b64」的选择，不是启用前提：
-// 未配置时同步返回 b64_json 即可，因此这里传 resolver 而非把功能整体关掉。
-func ProvideAdobeImageService(settings *ImageStorageSettingService) *AdobeImageService {
-	return NewAdobeImageService(settings.Resolver())
-}
-
 // ProvideBackupService creates and starts BackupService
 func ProvideBackupService(
 	settingRepo SettingRepository,
@@ -920,7 +902,6 @@ var ProviderSet = wire.NewSet(
 	NewOpenAIGatewayService,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
-	ProvideAdobeImageService,
 	ProvideBatchImageModelPricingResolver,
 	NewBatchImagePublicService,
 	NewBatchImageDownloadService,
@@ -942,7 +923,6 @@ var ProviderSet = wire.NewSet(
 	ProvideOAuthRefreshAPI,
 	ProvideGeminiTokenProvider,
 	ProvideKiroTokenProvider,
-	ProvideAdobeTokenProvider,
 	ProvideKiroCooldownStore,
 	NewGeminiMessagesCompatService,
 	ProvideAntigravityTokenProvider,
