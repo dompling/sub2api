@@ -1102,6 +1102,9 @@ type GatewayConfig struct {
 	ImageStreamKeepaliveInterval int `mapstructure:"image_stream_keepalive_interval"`
 	// ImageNonstreamKeepaliveInterval: 图片非流式 JSON keepalive 间隔（秒），0表示禁用
 	ImageNonstreamKeepaliveInterval int `mapstructure:"image_nonstream_keepalive_interval"`
+	// LeonardoUsageTokensPerCredit: Leonardo 原生号响应 usage 的估算比例（每积分多少
+	// 输出 token；Leonardo 不报 token 用量），0 表示不返回 usage
+	LeonardoUsageTokensPerCredit float64 `mapstructure:"leonardo_usage_tokens_per_credit"`
 	// MaxLineSize: 上游 SSE 单行最大字节数（0使用默认值）
 	MaxLineSize int `mapstructure:"max_line_size"`
 
@@ -2586,6 +2589,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_stream_data_interval_timeout", 900)
 	viper.SetDefault("gateway.image_stream_keepalive_interval", 10)
 	viper.SetDefault("gateway.image_nonstream_keepalive_interval", 0)
+	// 34 token/积分：gpt-image-1 官方表 LOW 1024x1024 = 272、1536x1024 = 408 token，
+	// 对应 Leonardo gpt-image-2 LOW 的 8 / 12 积分。
+	viper.SetDefault("gateway.leonardo_usage_tokens_per_credit", 34)
 	viper.SetDefault("gateway.max_line_size", 500*1024*1024)
 	viper.SetDefault("gateway.scheduling.sticky_session_max_waiting", 3)
 	viper.SetDefault("gateway.scheduling.sticky_session_wait_timeout", 120*time.Second)
@@ -3504,6 +3510,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.ImageNonstreamKeepaliveInterval != 0 &&
 		(c.Gateway.ImageNonstreamKeepaliveInterval < 5 || c.Gateway.ImageNonstreamKeepaliveInterval > 60) {
 		return fmt.Errorf("gateway.image_nonstream_keepalive_interval must be 0 or between 5-60 seconds")
+	}
+	if c.Gateway.LeonardoUsageTokensPerCredit < 0 {
+		return fmt.Errorf("gateway.leonardo_usage_tokens_per_credit must be non-negative")
 	}
 	// 兼容旧键 sticky_previous_response_ttl_seconds
 	if c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {

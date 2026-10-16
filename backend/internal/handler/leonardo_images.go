@@ -101,13 +101,24 @@ func (h *GatewayHandler) LeonardoImages(c *gin.Context) {
 
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	call := service.NewLeonardoImageCall(parsed, channelMapping.MappedModel)
+	call.UsageTokensPerCredit = h.leonardoUsageTokensPerCredit()
 	h.runLeonardoImagesFailover(c, reqLog, apiKey, subject, subscription, &leonardoImagesRequest{
 		parsed:         parsed,
 		body:           body,
 		routingModel:   routingModel,
 		channelMapping: channelMapping,
-		call:           service.NewLeonardoImageCall(parsed, channelMapping.MappedModel),
+		call:           call,
 	})
+}
+
+// leonardoUsageTokensPerCredit 是响应 usage 的估算比例
+// （gateway.leonardo_usage_tokens_per_credit，默认 34；0 不返回 usage）。
+func (h *GatewayHandler) leonardoUsageTokensPerCredit() float64 {
+	if h.cfg == nil || h.cfg.Gateway.LeonardoUsageTokensPerCredit <= 0 {
+		return 0
+	}
+	return h.cfg.Gateway.LeonardoUsageTokensPerCredit
 }
 
 // leonardoImagesRequest 汇总一次 Leonardo 出图请求在换号尝试之间共享的输入。
@@ -294,15 +305,16 @@ func (h *GatewayHandler) runLeonardoImagesFailover(
 		if err != nil || account == nil {
 			if requireRelay && len(failedAccountIDs) == 0 {
 				// 组内没有可用的中转号：明确拒绝，不降级到原生（mask 会被忽略、
-				// n>8 原生不支持，降级只会产生错误结果）。
+				// n>8 与 webp 原生不支持，降级只会产生错误结果）。
 				reqLog.Warn("leonardo_images.relay_required_unavailable",
 					zap.String("model", parsed.Model),
 					zap.Bool("mask", parsed.HasMask),
 					zap.Int("n", parsed.N),
+					zap.String("output_format", parsed.OutputFormat),
 					zap.Error(err),
 				)
 				leonardoImagesError(c, http.StatusBadRequest, "invalid_request_error",
-					"This request uses parameters that Leonardo native accounts do not support (mask or n>8); configure an OpenAI-compatible relay account (base_url + api_key) in this group to serve it")
+					"This request uses parameters that Leonardo native accounts do not support (mask, n>8 or output_format=webp); configure an OpenAI-compatible relay account (base_url + api_key) in this group to serve it")
 				return
 			}
 			if lastFailover == nil && len(busyAccountIDs) > 0 {
@@ -736,17 +748,52 @@ func leonardoImagesFailoverError(c *gin.Context, failover *service.UpstreamFailo
 	if message == "" {
 		message = "Upstream request failed"
 	}
-	leonardoImagesError(c, status, string(failover.Reason), message)
+	// failover.Reason 是内部分类（leonardo_request 等），只进日志；对外按 OpenAI
+	// 错误类型渲染。内容安全拒绝与 OpenAI gpt-image 一致：
+	// image_generation_user_error + moderation_blocked。
+	if service.IsLeonardoContentRejected(failover) {
+		leonardoImagesErrorWithCode(c, status, "image_generation_user_error", "moderation_blocked", message)
+		return
+	}
+	leonardoImagesError(c, status, openAIErrorTypeForStatus(status), message)
+}
+
+// openAIErrorTypeForStatus 按状态码给出 OpenAI 错误对象的 type。
+func openAIErrorTypeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request_error"
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusForbidden:
+		return "permission_error"
+	case http.StatusNotFound:
+		return "not_found_error"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	default:
+		return "api_error"
+	}
 }
 
 // leonardoImagesError 渲染 OpenAI 形状的错误体——images 端点的客户端按 OpenAI 协议解析。
 // 假流式已提交 SSE 响应头时改写 SSE error 事件（状态码已是 200）。
 func leonardoImagesError(c *gin.Context, status int, errType, message string) {
-	if fakeStream := leonardoFakeStreamFromContext(c); fakeStream != nil && fakeStream.failIfCommitted(errType, message) {
+	leonardoImagesErrorWithCode(c, status, errType, "", message)
+}
+
+// leonardoImagesErrorWithCode 同 leonardoImagesError，额外带 error.code。与 OpenAI
+// 错误对象一致，param / code 两个键始终存在（无值时为 null）。
+func leonardoImagesErrorWithCode(c *gin.Context, status int, errType, code, message string) {
+	if fakeStream := leonardoFakeStreamFromContext(c); fakeStream != nil && fakeStream.failIfCommitted(errType, code, message) {
 		return
 	}
 	if service.IsResponseCommitted(c) {
 		return
 	}
-	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": message}})
+	var codeValue any
+	if code = strings.TrimSpace(code); code != "" {
+		codeValue = code
+	}
+	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": message, "param": nil, "code": codeValue}})
 }

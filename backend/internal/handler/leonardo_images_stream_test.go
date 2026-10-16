@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,13 +59,59 @@ func TestLeonardoFakeStreamErrorAfterCommitIsSSE(t *testing.T) {
 	defer stream.stop()
 
 	require.Eventually(t, stream.committed, time.Second, 5*time.Millisecond)
-	leonardoImagesError(c, http.StatusBadRequest, "leonardo_provider_moderation", "Content flagged by provider moderation")
+	leonardoImagesFailoverError(c, &service.UpstreamFailoverError{
+		ClientStatusCode: http.StatusBadRequest,
+		ClientMessage:    "Content flagged by provider moderation",
+		Reason:           service.GatewayFailureReason("leonardo_provider_moderation"),
+	})
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	body := recorder.Body.String()
 	require.Contains(t, body, "event: error\n")
-	require.Contains(t, body, `"type":"leonardo_provider_moderation"`)
+	require.Contains(t, body, `"type":"image_generation_user_error"`)
+	require.Contains(t, body, `"code":"moderation_blocked"`)
+	require.Contains(t, body, `"param":null`)
 	require.Contains(t, body, `"message":"Content flagged by provider moderation"`)
+}
+
+// failover 错误按 OpenAI 错误对象渲染：type 由状态码决定（内部 Reason 不外露），
+// param / code 两个键始终存在；内容安全拒绝为 image_generation_user_error + moderation_blocked。
+func TestLeonardoImagesFailoverErrorUsesOpenAIShape(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		reason   string
+		wantType string
+		wantCode any
+	}{
+		{"request", http.StatusBadRequest, "leonardo_request", "invalid_request_error", nil},
+		{"rate limited", http.StatusTooManyRequests, "leonardo_upstream", "rate_limit_error", nil},
+		{"upstream", http.StatusBadGateway, "leonardo_upstream", "api_error", nil},
+		{"indeterminate", http.StatusGatewayTimeout, "leonardo_indeterminate", "api_error", nil},
+		{"content rejected", http.StatusBadRequest, "leonardo_content_rejected", "image_generation_user_error", "moderation_blocked"},
+		{"provider moderation", http.StatusBadRequest, "leonardo_provider_moderation", "image_generation_user_error", "moderation_blocked"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, recorder := newLeonardoStreamTestContext()
+			leonardoImagesFailoverError(c, &service.UpstreamFailoverError{
+				ClientStatusCode: tc.status,
+				ClientMessage:    "boom",
+				Reason:           service.GatewayFailureReason(tc.reason),
+			})
+			require.Equal(t, tc.status, recorder.Code)
+			var body struct {
+				Error map[string]any `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+			require.Equal(t, tc.wantType, body.Error["type"])
+			require.Equal(t, "boom", body.Error["message"])
+			require.Contains(t, body.Error, "param")
+			require.Nil(t, body.Error["param"])
+			require.Contains(t, body.Error, "code")
+			require.Equal(t, tc.wantCode, body.Error["code"])
+		})
+	}
 }
 
 // 转交中转号期间暂停：不提交响应头、不写保活。

@@ -159,7 +159,7 @@ func (s *leonardoFakeStream) writeEvents(events []service.ImagesStreamEvent) {
 // failIfCommitted 结束保活；SSE 已提交时把错误写成 error 事件并返回 true，
 // 否则返回 false（调用方按普通 JSON 错误响应）。检查与结束在同一把锁内，
 // 不会与保活 goroutine 的提交交错。
-func (s *leonardoFakeStream) failIfCommitted(errType, message string) bool {
+func (s *leonardoFakeStream) failIfCommitted(errType, code, message string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finishLocked()
@@ -167,7 +167,7 @@ func (s *leonardoFakeStream) failIfCommitted(errType, message string) bool {
 		return false
 	}
 	if !s.dead {
-		if err := writeLeonardoSSEEvent(s.c.Writer, "error", service.ImagesStreamErrorPayload(errType, message)); err != nil {
+		if err := writeLeonardoSSEEvent(s.c.Writer, "error", service.ImagesStreamErrorPayload(errType, code, message)); err != nil {
 			s.dead = true
 		} else {
 			s.c.Writer.Flush()

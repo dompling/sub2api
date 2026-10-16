@@ -63,15 +63,16 @@ func LeonardoModelIDs() []string {
 }
 
 // LeonardoRequiresRelay 判断哪些 OpenAI Images 参数组合原生路径不支持、
-// 只能由中转号服务：mask 局部重绘（Leonardo GraphQL 无 inpaint 语义）与超过
-// 原生张数上限（quantity ≤ 8）。透明背景、n≤8 原生支持；stream=true 在原生号
-// 上走假流式（handler 的 leonardoFakeStream）。命中且无可用中转号时返回明确
-// 400，不降级为参考图编辑（降级会产生错误结果）。
+// 只能由中转号服务：mask 局部重绘（Leonardo GraphQL 无 inpaint 语义）、超过
+// 原生张数上限（quantity ≤ 8）与 output_format=webp（本机只转码 png / jpeg）。
+// 透明背景、n≤8、png / jpeg 原生支持；stream=true 在原生号上走假流式（handler
+// 的 leonardoFakeStream）。命中且无可用中转号时返回明确 400，不降级为原生
+// 出图（降级会产生错误结果）。
 func LeonardoRequiresRelay(req *OpenAIImagesRequest) bool {
 	if req == nil {
 		return false
 	}
-	return req.HasMask || req.N > leonardopkg.MaxImageQuantity
+	return req.HasMask || req.N > leonardopkg.MaxImageQuantity || isImageOutputFormatWebP(req.OutputFormat)
 }
 
 // LeonardoRelaySelectionExclusions 构造「只走中转」阶段的选号排除集。

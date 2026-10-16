@@ -66,6 +66,23 @@ func TestLeonardoGenerateCallRejectsUnsupportedUpstreamModel(t *testing.T) {
 	require.Contains(t, requestErr.User(), "not supported on Leonardo")
 }
 
+// moderation 接受但忽略（客户端常默认携带）；input_fidelity / style 仍明确拒绝。
+func TestValidateLeonardoImageParamsIgnoresModerationAndInputFidelity(t *testing.T) {
+	for _, moderation := range []string{"auto", "low"} {
+		require.NoError(t, validateLeonardoImageParams(&OpenAIImagesRequest{Prompt: "cat", Moderation: moderation}), moderation)
+	}
+	for _, fidelity := range []string{"high", "low"} {
+		require.NoError(t, validateLeonardoImageParams(&OpenAIImagesRequest{Prompt: "cat", InputFidelity: fidelity}), fidelity)
+	}
+	// input_fidelity 原生忽略，不需要转中转号。
+	require.False(t, LeonardoRequiresRelay(&OpenAIImagesRequest{InputFidelity: "high"}))
+
+	err := validateLeonardoImageParams(&OpenAIImagesRequest{Prompt: "cat", Style: "vivid"})
+	var requestErr *leonardopkg.RequestError
+	require.ErrorAs(t, err, &requestErr)
+	require.Contains(t, requestErr.User(), "style")
+}
+
 // 超出 OpenAI 像素上限的尺寸在提交前就以请求错误拒绝（上游校验会放行，
 // 扣积分后生成阶段才 FAILED）。
 func TestLeonardoGenerateRejectsOversizedImageBeforeSubmit(t *testing.T) {

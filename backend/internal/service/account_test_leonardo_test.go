@@ -25,16 +25,23 @@ type fakeLeonardoUpstream struct {
 	mu            sync.Mutex
 	gen           map[string]any
 	creditQueries int
+	// image 是 CDN 返回的产物字节；默认是一段只有 JPEG 文件头的伪造字节
+	// （无法解码），需要真实图片的用例自行替换。
+	image []byte
 }
 
 func newFakeLeonardoUpstream(t *testing.T) *fakeLeonardoUpstream {
 	t.Helper()
-	f := &fakeLeonardoUpstream{}
-	jpeg := append([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}, make([]byte, 64)...)
+	f := &fakeLeonardoUpstream{
+		image: append([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}, make([]byte, 64)...),
+	}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/img.jpg" {
+			f.mu.Lock()
+			image := f.image
+			f.mu.Unlock()
 			w.Header().Set("Content-Type", "image/jpeg")
-			_, _ = w.Write(jpeg)
+			_, _ = w.Write(image)
 			return
 		}
 		var body struct {

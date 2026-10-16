@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -52,12 +53,15 @@ type LeonardoImageResult struct {
 	// 以下元数据供假流式的 completed 事件使用（OpenAI Images 流式协议字段）。
 	// Size 是上游实际出图尺寸（如 "1024x1024"）。
 	Size string
-	// OutputFormat 按首张图文件头判定：png（透明背景）或 jpeg。
+	// OutputFormat 按首张图（转码后）文件头判定：png 或 jpeg。
 	OutputFormat string
 	// Quality 是提交给上游的质量档（小写，如 "medium"）。
 	Quality string
 	// Background 是 transparent 或 opaque。
 	Background string
+	// Usage 是按扣除积分估算的 OpenAI usage 对象（JSON）；未开启估算或积分
+	// 未知时为 nil。见 leonardoImageUsage。
+	Usage json.RawMessage
 }
 
 // leonardoImageDetachedTimeout 是提交之后（轮询、下载、转存）脱离客户端连接
@@ -85,6 +89,9 @@ type LeonardoImageCall struct {
 	Request *OpenAIImagesRequest
 	// ChannelMappedModel 非空时替代 Request.Model 参与账号模型映射与计费模型。
 	ChannelMappedModel string
+	// UsageTokensPerCredit 是估算 usage 的换算比例（每积分多少输出 token，
+	// 配置 gateway.leonardo_usage_tokens_per_credit）；≤0 时响应不带 usage。
+	UsageTokensPerCredit float64
 
 	inputsOnce sync.Once
 	inputs     []*leonardoInputImage
@@ -117,8 +124,11 @@ func (call *LeonardoImageCall) inputImages(ctx context.Context, client *http.Cli
 // validateLeonardoImageParams 校验原生路径不支持的参数组合。
 // mask / n>8 由 handler 在选号前转中转或拒绝，这里是兜底防线。stream 由
 // handler 以假流式承接，本服务只产出完整结果；partial_images 接受但忽略
-// （假流式不发预览，OpenAI 允许实际预览张数少于请求）。其余 OpenAI 专属
-// 参数（moderation / input_fidelity / style）原生协议没有对应语义，明确拒绝。
+// （假流式不发预览，OpenAI 允许实际预览张数少于请求）。moderation 与
+// input_fidelity 同样接受但忽略：审核强度由 Leonardo 上游决定；参考图强度
+// 原生固定 MID，没有 fidelity 档位，忽略只是少一点细节保真，不会出错（不少
+// 客户端默认就带这两个字段；中转号照旧透传）。style（dall-e-3 专属）原生
+// 协议没有对应语义，明确拒绝。
 func validateLeonardoImageParams(req *OpenAIImagesRequest) error {
 	if req == nil {
 		return leonardo.NewRequestError("images request is required")
@@ -129,17 +139,18 @@ func validateLeonardoImageParams(req *OpenAIImagesRequest) error {
 	if req.N > leonardo.MaxImageQuantity {
 		return leonardo.NewRequestError(fmt.Sprintf("n > %d is only supported through Leonardo relay accounts", leonardo.MaxImageQuantity))
 	}
-	for _, flag := range []struct {
-		name  string
-		value string
-	}{
-		{"moderation", req.Moderation},
-		{"input_fidelity", req.InputFidelity},
-		{"style", req.Style},
-	} {
-		if strings.TrimSpace(flag.value) != "" {
-			return leonardo.NewRequestError(fmt.Sprintf("parameter %q is not supported on Leonardo native accounts", flag.name))
-		}
+	if strings.TrimSpace(req.Style) != "" {
+		return leonardo.NewRequestError(`parameter "style" is not supported on Leonardo native accounts`)
+	}
+	// output_format 在下载后本机转码（png / jpeg）；webp 只能由中转号服务。
+	outputFormat, ok := normalizeImageOutputFormat(req.OutputFormat)
+	switch {
+	case isImageOutputFormatWebP(req.OutputFormat):
+		return leonardo.NewRequestError("output_format=webp is only supported through Leonardo relay accounts")
+	case !ok:
+		return leonardo.NewRequestError(fmt.Sprintf("unsupported output_format %q (expected png or jpeg)", strings.TrimSpace(req.OutputFormat)))
+	case outputFormat == imageOutputFormatJPEG && leonardoWantsTransparentBackground(req):
+		return leonardo.NewRequestError("output_format=jpeg does not support background=transparent")
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return leonardo.NewRequestError("prompt is required")
@@ -251,32 +262,67 @@ func (s *LeonardoImageService) GenerateCall(
 	if err != nil {
 		return nil, &leonardoResultUnavailableError{generationID: generated.GenerationID, err: err}
 	}
+	// 上游普通图是 JPEG、透明背景是 PNG；客户端指定 output_format 时本机转码，
+	// 未指定时保持上游格式（validateLeonardoImageParams 已拦掉不支持的取值）。
+	outputFormat, _ := normalizeImageOutputFormat(req.OutputFormat)
+	images = applyImageOutputFormat(images, outputFormat, req.OutputCompression)
 
-	requestID := "leonardo-image:" + uuid.NewString()
-	body, err := s.buildResponseBody(upstreamCtx, requestID, images)
-	if err != nil {
-		return nil, &leonardoResultUnavailableError{generationID: generated.GenerationID, err: err}
-	}
-
-	billingSize := leonardoBillingSize(detail.ImageWidth, detail.ImageHeight, images, slot)
-	return &LeonardoImageResult{
-		Body: body,
-		Forward: &OpenAIForwardResult{
-			RequestID:        requestID,
-			Model:            requestedModel,
-			ImageCount:       len(images),
-			ImageSize:        billingSize,
-			UpstreamModel:    upstreamModel,
-			UpstreamEndpoint: leonardo.GraphQLURL,
-			Duration:         time.Since(startTime),
-		},
+	// 回显字段与 usage 先算好：非流式写进响应体最外层，假流式写进 completed 事件。
+	result := &LeonardoImageResult{
 		APICreditCost: generated.APICreditCost,
 		GenerationID:  generated.GenerationID,
 		Size:          leonardoResultSize(detail, slot),
 		OutputFormat:  leonardoImageOutputFormat(images),
 		Quality:       strings.ToLower(request.Parameters.Quality),
 		Background:    leonardoResultBackground(request.Parameters.Transparency),
-	}, nil
+		Usage:         leonardoImageUsage(requestedModel, req.Prompt, generated.APICreditCost, call.UsageTokensPerCredit),
+	}
+
+	requestID := "leonardo-image:" + uuid.NewString()
+	body, err := s.buildResponseBody(upstreamCtx, requestID, images, result)
+	if err != nil {
+		return nil, &leonardoResultUnavailableError{generationID: generated.GenerationID, err: err}
+	}
+	result.Body = body
+	result.Forward = &OpenAIForwardResult{
+		RequestID:        requestID,
+		Model:            requestedModel,
+		ImageCount:       len(images),
+		ImageSize:        leonardoBillingSize(detail.ImageWidth, detail.ImageHeight, images, slot),
+		UpstreamModel:    upstreamModel,
+		UpstreamEndpoint: leonardo.GraphQLURL,
+		Duration:         time.Since(startTime),
+	}
+	return result, nil
+}
+
+// leonardoImageUsage 估算 OpenAI 形状的 usage：Leonardo 不报 token 用量，输出
+// token 按本次扣除的积分 × tokensPerCredit 估算（积分与 OpenAI 出图 token 成正比：
+// gpt-image-1 官方表 LOW 1024x1024 = 272 token、1536x1024 = 408 token，对应
+// Leonardo 8 / 12 积分，均为 34 token/积分）；提示词按 o200k 分词计数，参考图
+// 输入 token 没有公开公式，记 0。tokensPerCredit ≤ 0 或积分未知时返回 nil。
+func leonardoImageUsage(model, prompt string, credits int, tokensPerCredit float64) json.RawMessage {
+	if tokensPerCredit <= 0 || credits <= 0 {
+		return nil
+	}
+	outputTokens := int(math.Round(float64(credits) * tokensPerCredit))
+	textTokens := 0
+	if codec, err := openAIInputTokensCodecForModel(model); err == nil {
+		if n, err := codec.Count(prompt); err == nil {
+			textTokens = n
+		}
+	}
+	usage, err := json.Marshal(map[string]any{
+		"input_tokens":          textTokens,
+		"input_tokens_details":  map[string]int{"text_tokens": textTokens, "image_tokens": 0},
+		"output_tokens":         outputTokens,
+		"output_tokens_details": map[string]int{"image_tokens": outputTokens, "text_tokens": 0},
+		"total_tokens":          textTokens + outputTokens,
+	})
+	if err != nil {
+		return nil
+	}
+	return usage
 }
 
 // leonardoResultSize 优先取上游报告的实际尺寸，缺失时退回请求解析出的槽位。
@@ -570,7 +616,7 @@ func downloadLeonardoImageWithRetry(ctx context.Context, client *leonardo.Client
 
 // buildResponseBody 构造 OpenAI 形状的响应：先 b64_json 组装，对象存储可用
 // 时整体过 ImageResultUploader.Rewrite 换成 url（转存失败回落 b64，不丢产物）。
-func (s *LeonardoImageService) buildResponseBody(ctx context.Context, requestID string, images [][]byte) ([]byte, error) {
+func (s *LeonardoImageService) buildResponseBody(ctx context.Context, requestID string, images [][]byte, meta *LeonardoImageResult) ([]byte, error) {
 	if len(images) == 0 {
 		return nil, leonardo.NewRequestError("leonardo returned an empty image")
 	}
@@ -581,10 +627,27 @@ func (s *LeonardoImageService) buildResponseBody(ctx context.Context, requestID 
 		}
 		data = append(data, map[string]any{"b64_json": base64.StdEncoding.EncodeToString(image)})
 	}
-	body, err := json.Marshal(map[string]any{
+	top := map[string]any{
 		"created": time.Now().Unix(),
 		"data":    data,
-	})
+	}
+	// 与 OpenAI gpt-image 响应一致，最外层回显实际出图参数与 usage。
+	if meta != nil {
+		for key, value := range map[string]string{
+			"background":    meta.Background,
+			"output_format": meta.OutputFormat,
+			"quality":       meta.Quality,
+			"size":          meta.Size,
+		} {
+			if value != "" {
+				top[key] = value
+			}
+		}
+		if len(meta.Usage) > 0 {
+			top["usage"] = meta.Usage
+		}
+	}
+	body, err := json.Marshal(top)
 	if err != nil {
 		return nil, leonardo.NewRequestError(fmt.Sprintf("encode images response: %v", err))
 	}

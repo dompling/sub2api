@@ -55,10 +55,18 @@ func TestLeonardoImagesStreamEventsEditsAndURLs(t *testing.T) {
 }
 
 func TestImagesStreamErrorPayload(t *testing.T) {
-	payload := ImagesStreamErrorPayload("leonardo_provider_moderation", "Content flagged by provider moderation")
+	payload := ImagesStreamErrorPayload("image_generation_user_error", "moderation_blocked", "Content flagged by provider moderation")
 	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
-	require.Equal(t, "leonardo_provider_moderation", gjson.GetBytes(payload, "error.type").String())
+	require.Equal(t, "image_generation_user_error", gjson.GetBytes(payload, "error.type").String())
+	require.Equal(t, "moderation_blocked", gjson.GetBytes(payload, "error.code").String())
 	require.Equal(t, "Content flagged by provider moderation", gjson.GetBytes(payload, "error.message").String())
+	require.Equal(t, gjson.Null, gjson.GetBytes(payload, "error.param").Type)
+
+	// 无 code 时 code 键仍在，值为 null。
+	payload = ImagesStreamErrorPayload("api_error", "", "Upstream request failed")
+	require.True(t, gjson.GetBytes(payload, "error.code").Exists())
+	require.Equal(t, gjson.Null, gjson.GetBytes(payload, "error.code").Type)
+	require.True(t, gjson.GetBytes(payload, "error.param").Exists())
 }
 
 func TestValidateLeonardoImageParamsAcceptsStreamAndPartialImages(t *testing.T) {
@@ -81,4 +89,49 @@ func TestLeonardoGenerateCallResultMetadata(t *testing.T) {
 	require.Equal(t, "low", result.Quality)
 	require.Equal(t, "opaque", result.Background)
 	require.Len(t, LeonardoImagesStreamEvents(&OpenAIImagesRequest{Stream: true}, result), 2)
+
+	// 非流式响应体最外层回显实际出图参数（与 OpenAI gpt-image 响应一致）。
+	require.Equal(t, "opaque", gjson.GetBytes(result.Body, "background").String())
+	require.Equal(t, "jpeg", gjson.GetBytes(result.Body, "output_format").String())
+	require.Equal(t, "low", gjson.GetBytes(result.Body, "quality").String())
+	require.Equal(t, "1024x1024", gjson.GetBytes(result.Body, "size").String())
+	// 未配置换算比例：不带 usage。
+	require.Nil(t, result.Usage)
+	require.False(t, gjson.GetBytes(result.Body, "usage").Exists())
+}
+
+// usage 按扣除积分 × 比例估算：非流式写在最外层，流式只挂在最后一个 completed 事件上。
+func TestLeonardoGenerateCallEstimatesUsage(t *testing.T) {
+	upstream := newFakeLeonardoUpstream(t)
+	account := &Account{ID: 88, Platform: PlatformLeonardo, Type: AccountTypeOAuth, Credentials: map[string]any{"cookie": "c"}}
+	call := NewLeonardoImageCall(&OpenAIImagesRequest{
+		Model: "gpt-image-2", Prompt: "an apple on a table", Quality: "low", N: 2, Stream: true,
+	}, "")
+	call.UsageTokensPerCredit = 34
+	result, err := upstream.imageService().GenerateCall(context.Background(), account, "jwt", call)
+	require.NoError(t, err)
+
+	// 假上游 gpt-image-2 的 apiCreditCost = 8 → 8 × 34 = 272。
+	usage := gjson.GetBytes(result.Body, "usage")
+	require.True(t, usage.Exists())
+	require.Equal(t, int64(272), usage.Get("output_tokens").Int())
+	require.Equal(t, int64(272), usage.Get("output_tokens_details.image_tokens").Int())
+	textTokens := usage.Get("input_tokens_details.text_tokens").Int()
+	require.Positive(t, textTokens)
+	require.Equal(t, textTokens, usage.Get("input_tokens").Int())
+	require.Equal(t, textTokens+272, usage.Get("total_tokens").Int())
+
+	events := LeonardoImagesStreamEvents(call.Request, result)
+	require.Len(t, events, 2)
+	require.False(t, gjson.GetBytes(events[0].Payload, "usage").Exists(), "只有最后一个事件带 usage")
+	require.Equal(t, int64(272), gjson.GetBytes(events[1].Payload, "usage.output_tokens").Int())
+}
+
+func TestLeonardoImageUsage(t *testing.T) {
+	require.Nil(t, leonardoImageUsage("gpt-image-2", "cat", 8, 0), "比例为 0 不返回 usage")
+	require.Nil(t, leonardoImageUsage("gpt-image-2", "cat", 0, 34), "积分未知不返回 usage")
+	usage := leonardoImageUsage("gpt-image-2", "", 137, 34)
+	require.Equal(t, int64(4658), gjson.GetBytes(usage, "output_tokens").Int())
+	require.Equal(t, int64(0), gjson.GetBytes(usage, "input_tokens").Int())
+	require.Equal(t, int64(0), gjson.GetBytes(usage, "input_tokens_details.image_tokens").Int())
 }

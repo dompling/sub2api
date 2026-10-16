@@ -119,6 +119,10 @@ func TestLeonardoRelayPredicates(t *testing.T) {
 	require.False(t, LeonardoRequiresRelay(&OpenAIImagesRequest{N: 8}))
 	require.True(t, LeonardoRequiresRelay(&OpenAIImagesRequest{N: 9}))
 	require.False(t, LeonardoRequiresRelay(&OpenAIImagesRequest{Stream: true}), "stream 在原生号上走假流式")
+	// output_format：png / jpeg 原生本机转码，webp 只走中转。
+	require.False(t, LeonardoRequiresRelay(&OpenAIImagesRequest{OutputFormat: "png"}))
+	require.False(t, LeonardoRequiresRelay(&OpenAIImagesRequest{OutputFormat: "jpeg"}))
+	require.True(t, LeonardoRequiresRelay(&OpenAIImagesRequest{OutputFormat: " WebP "}))
 	require.False(t, LeonardoRequiresRelay(&OpenAIImagesRequest{N: 1}))
 	require.False(t, LeonardoRequiresRelay(nil))
 
