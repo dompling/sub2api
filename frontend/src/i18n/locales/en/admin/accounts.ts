@@ -121,6 +121,7 @@ export default {
       kiroUsageForbidden: 'Usage Forbidden',
       kiroUsageForbiddenHint: 'Usage fetch is blocked for this account, but request forwarding may still work',
       platforms: {
+        leonardo: 'Leonardo',
         anthropic: 'Anthropic',
         claude: 'Claude',
         openai: 'OpenAI',
@@ -238,6 +239,8 @@ export default {
         grokOauth: 'Grok OAuth',
         kiroApikey: 'Connect to AWS directly via API Key',
         kiroApikeyRelay: 'Relay via external API Key + Base URL',
+        leonardoOauth: 'Leonardo web Cookie, direct GraphQL',
+        leonardoApikeyRelay: 'OpenAI-compatible relay fallback',
         kiroOauth: 'Social OAuth / AWS Builder ID / Import',
         antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
@@ -1756,7 +1759,22 @@ export default {
         approxCost: 'approx. {amount}',
         kiroCredits: 'Credits Used'
       },
+      leonardo: {
+        cookieLabel: 'Leonardo Cookie',
+        cookieHint: 'Log in to app.leonardo.ai, then copy the full cookie string from DevTools (Application → Cookies or a request Cookie header). Must include __Secure-better-auth.session_token; session_data.* shards are recommended. A bare session token value also works. The short-lived JWT is exchanged and kept alive automatically from this cookie.',
+        cookiePlaceholder: '__Secure-better-auth.session_token=...; __Secure-better-auth.session_data.0=...',
+        cookieRequired: 'Leonardo cookie is required',
+        relayApiKeyHint: "API key for the relay upstream (sent as Authorization: Bearer)",
+        relayBaseUrlHint: 'OpenAI-compatible upstream (official https://api.openai.com or a third-party relay); fallback when native accounts fail'
+      },
+
       usageWindow: {
+        leonardoCredits: 'Credits',
+        leonardoFast: 'Fast Tokens',
+        leonardoFastDaily: 'Fast Tokens (daily)',
+        leonardoRollover: 'Rollover Bank',
+        leonardoTopUp: 'Top-up',
+        leonardoReset: 'Reset',
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',
         geminiProDaily: 'Pro',

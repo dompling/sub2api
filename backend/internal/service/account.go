@@ -748,6 +748,8 @@ func defaultModelMappingForPlatform(platform string) map[string]string {
 		return domain.DefaultAntigravityModelMapping
 	case domain.PlatformKiro:
 		return domain.DefaultKiroModelMapping
+	case domain.PlatformLeonardo:
+		return domain.DefaultLeonardoModelMapping
 	default:
 		return nil
 	}
@@ -918,6 +920,10 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	// model_mapping 白名单错误排除出候选集，导致 no available accounts / 404（issue #4936）。
 	if a.IsOpenAIPassthroughEnabled() {
 		return true
+	}
+	// Leonardo 只服务平台已实现的模型（首期仅 gpt-image-2），自定义映射也绕不过去。
+	if a.Platform == PlatformLeonardo {
+		return leonardoAccountSupportsModel(a, requestedModel)
 	}
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
@@ -1453,6 +1459,11 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）与 OpenCode Go；
 // grok 走 GetGrokBaseURL，此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
+	// Leonardo 中转号借用 OpenAI Images 转发链路做分组兜底，必须返回它自己的
+	// base_url，否则会落到 api.openai.com。
+	if isLeonardoRelayAccount(a) {
+		return strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
+	}
 	if !a.IsOpenAI() && !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
@@ -1793,6 +1804,9 @@ func (a *Account) GetOpenAIApiKey() string {
 func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
+	}
+	if isLeonardoRelayAccount(a) {
+		return a.GetCredential("api_key")
 	}
 	if a.IsMultiProtocolAPIKey() {
 		if a.Type != AccountTypeAPIKey {

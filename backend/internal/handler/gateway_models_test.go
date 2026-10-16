@@ -100,24 +100,25 @@ func newGatewayModelsHandlerForTest(repo service.AccountRepository, routeRepo ..
 	return &GatewayHandler{
 		gatewayService: service.NewGatewayService(
 			repo,
-			nil,      // groupRepo
-			nil,      // usageLogRepo
-			nil,      // usageBillingRepo
-			nil,      // userRepo
-			nil,      // userSubRepo
-			nil,      // userGroupRateRepo
-			nil,      // cache
-			nil,      // cfg
-			nil,      // schedulerSnapshot
-			nil,      // concurrencyService
-			nil,      // billingService
-			nil,      // rateLimitService
-			nil,      // billingCacheService
-			nil,      // identityService
-			nil,      // httpUpstream
-			nil,      // deferredService
-			nil,      // claudeTokenProvider
-			nil,      // kiroTokenProvider
+			nil, // groupRepo
+			nil, // usageLogRepo
+			nil, // usageBillingRepo
+			nil, // userRepo
+			nil, // userSubRepo
+			nil, // userGroupRateRepo
+			nil, // cache
+			nil, // cfg
+			nil, // schedulerSnapshot
+			nil, // concurrencyService
+			nil, // billingService
+			nil, // rateLimitService
+			nil, // billingCacheService
+			nil, // identityService
+			nil, // httpUpstream
+			nil, // deferredService
+			nil, // claudeTokenProvider
+			nil, nil,
+			// kiroTokenProvider
 			nil,      // kiroCooldownStore
 			nil,      // sessionLimitCache
 			nil,      // rpmCache

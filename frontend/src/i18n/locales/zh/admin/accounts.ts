@@ -324,6 +324,7 @@ export default {
       deleteConfirm: "确定要删除账号 '{name}' 吗？此操作无法撤销。",
       failedToClearRateLimit: '清除速率限制失败',
       platforms: {
+        leonardo: 'Leonardo',
         claude: 'Claude',
         openai: 'OpenAI',
         anthropic: 'Anthropic',
@@ -441,6 +442,8 @@ export default {
         grokOauth: 'Grok OAuth',
         kiroApikey: '通过 API Key 直连 AWS',
         kiroApikeyRelay: '通过外部 API Key + Base URL 中转',
+        leonardoOauth: 'Leonardo 网页版 Cookie 直连',
+        leonardoApikeyRelay: 'OpenAI 兼容 API 中转兜底',
         kiroOauth: '社交 OAuth / AWS Builder ID / 导入',
         antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
@@ -532,6 +535,15 @@ export default {
           unavailableDesc: '服务不可用 - 暂停 30 分钟'
         }
       },
+      leonardo: {
+        cookieLabel: 'Leonardo Cookie',
+        cookieHint: '登录 app.leonardo.ai 后，从浏览器 DevTools（Application → Cookies 或 Network 请求头的 Cookie）复制完整 cookie 串；必须包含 __Secure-better-auth.session_token，分片 session_data.* 建议一并复制。也支持只粘贴裸 session token 值。短期 JWT 由后台自动用该 cookie 换取并保活。',
+        cookiePlaceholder: '__Secure-better-auth.session_token=...; __Secure-better-auth.session_data.0=...',
+        cookieRequired: '请填写 Leonardo Cookie',
+        relayApiKeyHint: '该外部上游的 API Key（通过 Authorization: Bearer 发送）',
+        relayBaseUrlHint: 'OpenAI 兼容上游地址（官方 https://api.openai.com 或三方中转）；原生账号全部故障时兜底'
+      },
+
       usageWindow: {
         statsTitle: '5小时窗口用量统计',
         statsTitleDaily: '每日用量统计',
@@ -564,6 +576,12 @@ export default {
         passiveSampled: '被动采样',
         activeQuery: '查询',
         kiroBonus: 'Bonus',
+        leonardoCredits: '积分',
+        leonardoFast: 'Fast 积分',
+        leonardoFastDaily: 'Fast 积分（每日）',
+        leonardoRollover: '结转积分',
+        leonardoTopUp: '充值积分',
+        leonardoReset: '重置',
         kiroCredits: 'Credits',
         kiroDaysLeft: '剩余 {days} 天',
         kiroExpires: '到期',

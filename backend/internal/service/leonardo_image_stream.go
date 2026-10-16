@@ -1,0 +1,70 @@
+package service
+
+import (
+	"strings"
+	"time"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+)
+
+// ImagesStreamEvent 是一条 OpenAI Images 流式（SSE）事件。
+type ImagesStreamEvent struct {
+	Name    string
+	Payload []byte
+}
+
+// LeonardoImagesStreamEvents 把一次 Leonardo 出图结果翻译成 OpenAI Images 流式
+// 协议的 completed 事件（每张图一条，事件名 image_generation.completed /
+// image_edit.completed）。Leonardo 上游不流式：这是「假流式」，没有
+// partial_image 事件（OpenAI 允许实际预览张数少于请求的 partial_images），
+// 也不带 usage（Leonardo 不报 token 用量，协议中为可选字段）。
+//
+// 产物经对象存储转存时只有 url：b64_json 留空、url 填存储地址。
+func LeonardoImagesStreamEvents(req *OpenAIImagesRequest, result *LeonardoImageResult) []ImagesStreamEvent {
+	if result == nil {
+		return nil
+	}
+	eventName := openAIImagesStreamPrefix(req) + ".completed"
+	responseFormat := ""
+	model := ""
+	if req != nil {
+		responseFormat = req.ResponseFormat
+		model = strings.TrimSpace(req.Model)
+	}
+	createdAt := gjson.GetBytes(result.Body, "created").Int()
+	if createdAt <= 0 {
+		createdAt = time.Now().Unix()
+	}
+
+	var events []ImagesStreamEvent
+	for _, item := range gjson.GetBytes(result.Body, "data").Array() {
+		b64 := strings.TrimSpace(item.Get("b64_json").String())
+		storedURL := strings.TrimSpace(item.Get("url").String())
+		if b64 == "" && storedURL == "" {
+			continue
+		}
+		payload := buildOpenAIImagesStreamCompletedPayload(eventName, openAIResponsesImageResult{
+			Result:       b64,
+			OutputFormat: result.OutputFormat,
+			Size:         result.Size,
+			Background:   result.Background,
+			Quality:      result.Quality,
+			Model:        model,
+		}, responseFormat, createdAt, nil)
+		if b64 == "" {
+			payload, _ = sjson.SetBytes(payload, "url", storedURL)
+		}
+		events = append(events, ImagesStreamEvent{Name: eventName, Payload: payload})
+	}
+	return events
+}
+
+// ImagesStreamErrorPayload 构造流式 error 事件的 data（{"type":"error","error":{…}}）。
+func ImagesStreamErrorPayload(errType, message string) []byte {
+	payload := buildOpenAIImagesStreamErrorBody(message)
+	if errType = strings.TrimSpace(errType); errType != "" {
+		payload, _ = sjson.SetBytes(payload, "error.type", errType)
+	}
+	return payload
+}

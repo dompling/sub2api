@@ -261,7 +261,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('renders all 14 platforms in one grid with Kiro last', () => {
+  it('renders all 15 platforms in one grid with Kiro and Leonardo last', () => {
     const wrapper = mountModal()
     const platformSelector = wrapper.get('[data-tour="account-form-platform"]')
 
@@ -280,6 +280,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       'Command Code',
       'Cline',
       'Kiro',
+      'Leonardo',
     ])
   })
 
@@ -719,13 +720,13 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     })
   })
 
-  it('keeps Kiro last after the generic aggregators', () => {
+  it('keeps Kiro and Leonardo on the last row after the generic aggregators', () => {
     const wrapper = mountModal()
     const labels = wrapper
       .get('[data-tour="account-form-platform"]')
       .findAll('button')
       .map((button) => button.text().trim())
-    expect(labels.slice(-4)).toEqual(['OpenCode', 'Command Code', 'Cline', 'Kiro'])
+    expect(labels.slice(-5)).toEqual(['OpenCode', 'Command Code', 'Cline', 'Kiro', 'Leonardo'])
     expect(labels.slice(5, 10)).toEqual(['TypeSafe / Jev', 'Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax'])
   })
 
@@ -1225,5 +1226,46 @@ describe('CreateAccountModal Vertex API key auth', () => {
     await selectButtonByText(wrapper, 'admin.accounts.vertexLabel')
     expect(wrapper.find('[data-testid="vertex-auth-mode-apikey"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="vertex-api-key-input"]').exists()).toBe(false)
+  })
+})
+
+describe('CreateAccountModal Leonardo accounts', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 7, platform: 'leonardo', type: 'oauth' })
+  })
+
+  it('moves the cookie account to the credential step instead of asking for an API key', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-tab-leonardo"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Leonardo cookie')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="leonardo-cookie-input"]').setValue('__Secure-better-auth.session_token=abc')
+    await wrapper.get('[data-testid="leonardo-create-account"]').trigger('click')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('leonardo')
+    expect(payload?.type).toBe('oauth')
+    expect(payload?.credentials).toMatchObject({ cookie: '__Secure-better-auth.session_token=abc' })
+  })
+
+  it('creates the relay account in one step with base_url and api_key', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-tab-leonardo"]').trigger('click')
+    await wrapper.get('[data-testid="leonardo-account-type-relay"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Leonardo relay')
+    await wrapper.get('[data-testid="leonardo-relay-base-url"]').setValue('https://relay.example.com')
+    await wrapper.get('[data-testid="leonardo-relay-api-key"]').setValue('sk-relay')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('leonardo')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.credentials).toMatchObject({ base_url: 'https://relay.example.com', api_key: 'sk-relay' })
   })
 })

@@ -1457,6 +1457,18 @@ export interface KiroCreditProgress {
   expiry_date?: string | null
 }
 
+// Leonardo 积分余额快照：上游只给各池剩余量，上限来自套餐常量表（未知套餐时为 0）
+export interface LeonardoCreditsSnapshot {
+  total: number
+  usable?: number
+  subscription: number
+  paid: number
+  rollover: number
+  fast_limit?: number
+  rollover_limit?: number
+  fast_daily?: boolean
+}
+
 export interface GrokQuotaWindow {
   limit?: number | null
   remaining?: number | null
@@ -1547,6 +1559,12 @@ export interface AccountUsageInfo {
   kiro_runtime_state?: string | null
   kiro_runtime_reason?: string | null
   kiro_runtime_reset_at?: string | null
+
+  // Leonardo 积分余额快照
+  leonardo_plan?: string | null
+  leonardo_plan_name?: string | null
+  leonardo_credits?: LeonardoCreditsSnapshot | null
+  leonardo_token_renewal?: string | null
 
   // Antigravity 403 forbidden 状态
   is_forbidden?: boolean
