@@ -412,7 +412,8 @@ func (s *OpenAIGatewayService) writeOpenAIWSBridgeUncommittedErrorEvent(c *gin.C
 // API Key 账号先转发经脱敏的 error 帧。payload 须已经 openAIWSBridgeClientErrorPayload 脱敏。
 func openAIWSBridgeCommittedErrorFrames(account *Account, responseID, model string, payload []byte, clientMsg string, output *openAIWSBridgeStreamOutput, clientOutputStarted bool) [][]byte {
 	failedSource, _ := sanitizeOpenAICapacityShedErrorCodeForClient(payload)
-	failed := buildOpenAIResponseFailedPayload(responseID, model, failedSource, clientMsg)
+	// createdAt=0：桥接路径不跟踪 created_at，由构造函数取当前时间（严格客户端要求必带）。
+	failed := buildOpenAIResponseFailedPayload(responseID, model, 0, failedSource, clientMsg)
 	if account != nil && account.IsOpenAIOAuthLike() {
 		return [][]byte{failed}
 	}
@@ -464,7 +465,7 @@ func (s *OpenAIGatewayService) writeOpenAIWSBridgeCommittedFallbackError(c *gin.
 		})
 	}
 	MarkResponseCommitted(c)
-	if _, err := c.Writer.WriteString(buildOpenAIResponseFailedSSE("", model, source, clientMessage)); err == nil {
+	if _, err := c.Writer.WriteString(buildOpenAIResponseFailedSSE("", model, 0, source, clientMessage)); err == nil {
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
