@@ -112,6 +112,8 @@ export default {
       kiroCooldown: 'Kiro 冷却中',
       kiroCreditUnitPriceUsd: '每积分单价',
       kiroCreditUnitPriceUsdHint: '仅用于 Kiro 今日统计的 Credits 金额估算，0 表示不显示估算金额',
+      leonardoCreditUnitPriceUsd: '每积分单价（USD）',
+      leonardoCreditUnitPriceUsdHint: '仅用于今日统计中估算 Leonardo 积分消耗的金额，0 表示不显示估算。参考价（月费 ÷ 每月快速积分）：Essential $12 / 8,500 ≈ $0.0014，Premium $30 / 25,000 = $0.0012，Ultimate $60 / 60,000 = $0.001；按年付费更便宜。',
       kiroProfileError: 'Profile 配置异常',
       kiroProfileHint: '请重新解析或保存可用的 profileArn',
       kiroRuntimeResetsAt: '预计 {time} 自动恢复',
@@ -1864,7 +1866,8 @@ export default {
         usageTrend: '30天费用与请求趋势',
         noData: '该账号暂无使用数据',
         approxCost: '约{amount}',
-        kiroCredits: '消费Credits'
+        kiroCredits: '消费Credits',
+        leonardoCredits: '消耗积分'
       }
     },
 

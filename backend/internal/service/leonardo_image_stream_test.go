@@ -95,9 +95,10 @@ func TestLeonardoGenerateCallResultMetadata(t *testing.T) {
 	require.Equal(t, "jpeg", gjson.GetBytes(result.Body, "output_format").String())
 	require.Equal(t, "low", gjson.GetBytes(result.Body, "quality").String())
 	require.Equal(t, "1024x1024", gjson.GetBytes(result.Body, "size").String())
-	// 未配置换算比例：不带 usage。
+	// 未配置换算比例：不带 usage，用量记录里也没有 token。
 	require.Nil(t, result.Usage)
 	require.False(t, gjson.GetBytes(result.Body, "usage").Exists())
+	require.Equal(t, OpenAIUsage{KiroCredits: 8}, result.Forward.Usage, "积分照常记录，与 usage 估算开关无关")
 }
 
 // usage 按扣除积分 × 比例估算：非流式写在最外层，流式只挂在最后一个 completed 事件上。
@@ -120,6 +121,14 @@ func TestLeonardoGenerateCallEstimatesUsage(t *testing.T) {
 	require.Positive(t, textTokens)
 	require.Equal(t, textTokens, usage.Get("input_tokens").Int())
 	require.Equal(t, textTokens+272, usage.Get("total_tokens").Int())
+
+	// 估算值同时写进用量记录（与 OpenAI 出图同一套映射：OutputTokens 含图片 token）。
+	require.Equal(t, int(textTokens), result.Forward.Usage.InputTokens)
+	require.Equal(t, 272, result.Forward.Usage.OutputTokens)
+	require.Equal(t, 272, result.Forward.Usage.ImageOutputTokens)
+	require.Zero(t, result.Forward.Usage.ImageInputTokens)
+	// 实扣积分写进上游积分列（usage_logs.kiro_credits），供今日统计估算成本。
+	require.Equal(t, 8.0, result.Forward.Usage.KiroCredits)
 
 	events := LeonardoImagesStreamEvents(call.Request, result)
 	require.Len(t, events, 2)

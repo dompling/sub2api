@@ -1318,6 +1318,20 @@
           </button>
         </div>
       </div>
+      <!-- Leonardo Cookie 账号的每积分单价：仅用于今日统计估算积分消耗金额，不参与计费 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-2">
+        <label class="input-label">{{ t('admin.accounts.leonardoCreditUnitPriceUsd') }}</label>
+        <input
+          v-model.number="leonardoCreditUnitPriceUsd"
+          type="number"
+          min="0"
+          step="0.0001"
+          class="input"
+          placeholder="0"
+          data-testid="leonardo-credit-unit-price-usd"
+        />
+        <p class="input-hint">{{ t('admin.accounts.leonardoCreditUnitPriceUsdHint') }}</p>
+      </div>
       <!-- Leonardo 外部中转(API Key + Base URL)：转发到 OpenAI 兼容出图上游，作为原生账号全部故障时的兜底 -->
       <div v-if="form.platform === 'leonardo' && accountCategory === 'apikey-relay'" class="space-y-4" data-testid="leonardo-relay-fields">
         <div>
@@ -5540,6 +5554,7 @@ const kiroImportTokenPlaceholder = computed(() => {
 })
 // Leonardo：长期凭据是浏览器 cookie；粘贴支持完整 k=v 串或裸 session token。
 const leonardoCookie = ref('')
+const leonardoCreditUnitPriceUsd = ref(0)
 const kiroUpstreamIDs = ref<Record<string, string>>({})
 const mergeKiroUpstreamIDs = (ids: Record<string, string>) => {
   kiroUpstreamIDs.value = { ...kiroUpstreamIDs.value, ...ids }
@@ -6581,6 +6596,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 // Methods
 const resetForm = () => {
   leonardoCookie.value = ''
+  leonardoCreditUnitPriceUsd.value = 0
   step.value = 1
   form.name = ''
   form.notes = ''
@@ -7446,6 +7462,12 @@ const createAccountAndFinish = async (
     const unitPrice = Number(kiroCreditUnitPriceUsd.value ?? 0)
     kiroExtra.kiro_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
     finalExtra = kiroExtra
+  }
+  if (platform === 'leonardo' && type === 'oauth') {
+    const leonardoExtra: Record<string, unknown> = { ...(finalExtra || {}) }
+    const unitPrice = Number(leonardoCreditUnitPriceUsd.value ?? 0)
+    leonardoExtra.leonardo_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
+    finalExtra = leonardoExtra
   }
   if (platform === 'grok') {
     if (!credentials.base_url) {

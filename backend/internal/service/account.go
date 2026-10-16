@@ -2375,12 +2375,62 @@ func (a *Account) IsAnthropicAPIKeyPassthroughEnabled() bool {
 	return ok && enabled
 }
 
+// CreditUnitPriceUSD returns the account-level USD price per upstream credit used
+// for display-only cost estimates (Kiro: extra.kiro_credit_unit_price_usd, Leonardo:
+// extra.leonardo_credit_unit_price_usd). Unset, non-numeric or non-positive values
+// yield 0.
+func (a *Account) CreditUnitPriceUSD() float64 {
+	if a == nil || a.Extra == nil {
+		return 0
+	}
+	var key string
+	switch a.Platform {
+	case PlatformKiro:
+		key = "kiro_credit_unit_price_usd"
+	case PlatformLeonardo:
+		key = "leonardo_credit_unit_price_usd"
+	default:
+		return 0
+	}
+	var value float64
+	switch v := a.Extra[key].(type) {
+	case float64:
+		value = v
+	case float32:
+		value = float64(v)
+	case int:
+		value = float64(v)
+	case int64:
+		value = float64(v)
+	case json.Number:
+		value, _ = v.Float64()
+	case string:
+		value, _ = strconv.ParseFloat(strings.TrimSpace(v), 64)
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return 0
+	}
+	return value
+}
+
 // ValidateKiroCreditUnitPriceFromExtra rejects invalid account-level Kiro credit pricing.
 func ValidateKiroCreditUnitPriceFromExtra(extra map[string]any) error {
+	return validateCreditUnitPriceFromExtra(extra, "kiro_credit_unit_price_usd")
+}
+
+// ValidateLeonardoCreditUnitPriceFromExtra rejects invalid account-level Leonardo
+// credit pricing (USD per Leonardo credit; display-only today-stats estimate).
+func ValidateLeonardoCreditUnitPriceFromExtra(extra map[string]any) error {
+	return validateCreditUnitPriceFromExtra(extra, "leonardo_credit_unit_price_usd")
+}
+
+// validateCreditUnitPriceFromExtra checks extra[key] is a finite number >= 0 and
+// normalizes it to float64 in place; a missing or nil key is accepted.
+func validateCreditUnitPriceFromExtra(extra map[string]any, key string) error {
 	if extra == nil {
 		return nil
 	}
-	raw, ok := extra["kiro_credit_unit_price_usd"]
+	raw, ok := extra[key]
 	if !ok || raw == nil {
 		return nil
 	}
@@ -2398,22 +2448,22 @@ func ValidateKiroCreditUnitPriceFromExtra(extra map[string]any) error {
 	case json.Number:
 		parsed, err := v.Float64()
 		if err != nil {
-			return fmt.Errorf("kiro_credit_unit_price_usd must be a number")
+			return fmt.Errorf("%s must be a number", key)
 		}
 		value = parsed
 	case string:
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
 		if err != nil {
-			return fmt.Errorf("kiro_credit_unit_price_usd must be a number")
+			return fmt.Errorf("%s must be a number", key)
 		}
 		value = parsed
 	default:
-		return fmt.Errorf("kiro_credit_unit_price_usd must be a number")
+		return fmt.Errorf("%s must be a number", key)
 	}
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-		return fmt.Errorf("kiro_credit_unit_price_usd must be a finite number >= 0")
+		return fmt.Errorf("%s must be a finite number >= 0", key)
 	}
-	extra["kiro_credit_unit_price_usd"] = value
+	extra[key] = value
 	return nil
 }
 

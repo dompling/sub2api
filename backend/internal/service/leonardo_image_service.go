@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	leonardo "github.com/Wei-Shaw/sub2api/internal/pkg/leonardo"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 // LeonardoImageService 把一次 OpenAI 形状的出图请求翻译成 Leonardo 网页版
@@ -292,6 +293,19 @@ func (s *LeonardoImageService) GenerateCall(
 		UpstreamModel:    upstreamModel,
 		UpstreamEndpoint: leonardo.GraphQLURL,
 		Duration:         time.Since(startTime),
+	}
+	// 估算的 usage 同时写进用量记录（/usage 展示；渠道按 token 计价时按它计费）。
+	// 与 OpenAI 出图同一套映射：OutputTokens 含图片 token，ImageOutputTokens 单列，
+	// 计费时文本输出按 OutputTokens - ImageOutputTokens 计，不会重复。
+	if len(result.Usage) > 0 {
+		if usage, ok := openAIUsageFromGJSON(gjson.ParseBytes(result.Usage)); ok {
+			result.Forward.Usage = usage
+		}
+	}
+	// 本次生成实扣的上游积分（整次生成、含 n 张图）写进用量记录的上游积分列
+	// （usage_logs.kiro_credits，与 Kiro 共用），供今日统计按账号积分单价估算成本。
+	if generated.APICreditCost > 0 {
+		result.Forward.Usage.KiroCredits = float64(generated.APICreditCost)
 	}
 	return result, nil
 }

@@ -26,6 +26,12 @@ func isLeonardoRelayAccount(account *Account) bool {
 	return IsLeonardoRelayAccount(account)
 }
 
+// isLeonardoCookieAccount 报告账号是否为 Leonardo Cookie 原生号（platform=leonardo、
+// type=oauth）：只有它直接消耗 Leonardo 积分。
+func isLeonardoCookieAccount(account *Account) bool {
+	return account != nil && account.Platform == PlatformLeonardo && account.Type == AccountTypeOAuth
+}
+
 // shouldSkipLeonardoNativeAccount 在本次请求已撞上内容安全拒绝后，禁止再打
 // Cookie 原生号（同样的输入大概率再次被拒）。中转号不受影响。
 func shouldSkipLeonardoNativeAccount(skipNative bool, account *Account) bool {

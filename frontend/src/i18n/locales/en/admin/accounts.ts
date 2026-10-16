@@ -114,6 +114,8 @@ export default {
       kiroCooldown: 'Kiro Cooldown',
       kiroCreditUnitPriceUsd: 'Credit Unit Price',
       kiroCreditUnitPriceUsdHint: 'Used only to estimate Kiro Credits cost in today stats. 0 hides the estimate.',
+      leonardoCreditUnitPriceUsd: 'Credit Unit Price (USD)',
+      leonardoCreditUnitPriceUsdHint: 'Used only to estimate the cost of Leonardo credits in today stats; 0 hides the estimate. Reference (monthly fee ÷ monthly fast credits): Essential $12 / 8,500 ≈ $0.0014, Premium $30 / 25,000 = $0.0012, Ultimate $60 / 60,000 = $0.001. Annual billing is cheaper.',
       kiroProfileError: 'Profile Error',
       kiroProfileHint: 'Resolve and save a valid profileArn for this account',
       kiroRuntimeResetsAt: 'Auto resumes at {time}',
@@ -1757,7 +1759,8 @@ export default {
         usageTrend: '30-Day Cost & Request Trend',
         noData: 'No usage data available for this account',
         approxCost: 'approx. {amount}',
-        kiroCredits: 'Credits Used'
+        kiroCredits: 'Credits Used',
+        leonardoCredits: 'Credits Used'
       },
       leonardo: {
         cookieLabel: 'Leonardo Cookie',

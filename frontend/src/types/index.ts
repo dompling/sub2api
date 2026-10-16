@@ -1277,6 +1277,7 @@ export interface Account {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
 kiro_credit_unit_price_usd?: number
+    leonardo_credit_unit_price_usd?: number
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
@@ -1929,6 +1930,10 @@ export interface AdminUsageLog extends UsageLog {
   account_rate_multiplier?: number | null
   // 自定义定价规则计算的账号统计费用（nil 时使用 total_cost * multiplier）
   account_stats_cost?: number | null
+  // 本次消耗的上游积分（Kiro credits / Leonardo 积分，仅管理员可见）
+  upstream_credits?: number | null
+  // 按账号当前积分单价估算的上游成本（USD，未设单价时为空）
+  upstream_credit_cost?: number | null
 
   // 渠道 ID 和计费等级（仅管理员可见）
   channel_id?: number | null

@@ -549,6 +549,30 @@ describe('EditAccountModal', () => {
     expect(account.group_ids).toEqual([1, 2])
   })
 
+  it('shows the model restriction for Leonardo cookie accounts and saves the whitelist', async () => {
+    const account = {
+      ...buildGrokOAuthAccount(),
+      id: 9,
+      name: 'Leonardo Cookie',
+      platform: 'leonardo',
+      credentials: { model_mapping: { 'gpt-image-2': 'gpt-image-2' } }
+    } as any
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.find('[data-testid="oauth-model-mapping-section"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-image-2')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-image-2': 'gpt-image-2'
+    })
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
@@ -1758,6 +1782,46 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.kiro_credit_unit_price_usd).toBe(0.08)
+  })
+
+  it('hydrates and submits Leonardo cookie credit unit price in extra', async () => {
+    const account = {
+      ...buildGrokOAuthAccount(),
+      id: 10,
+      name: 'Leonardo Cookie',
+      platform: 'leonardo',
+      credentials: {},
+      extra: { leonardo_credit_unit_price_usd: 0.0014 }
+    } as any
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="kiro-credit-unit-price-usd"]').exists()).toBe(false)
+    const input = wrapper.get<HTMLInputElement>('[data-testid="leonardo-credit-unit-price-usd"]')
+
+    expect(input.element.value).toBe('0.0014')
+
+    await input.setValue('0.0012')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.leonardo_credit_unit_price_usd).toBe(0.0012)
+    expect(extra).not.toHaveProperty('kiro_credit_unit_price_usd')
+  })
+
+  it('does not show the Leonardo credit unit price for relay accounts', () => {
+    const account = {
+      ...buildGrokAPIKeyAccount(),
+      id: 11,
+      name: 'Leonardo Relay',
+      platform: 'leonardo'
+    } as any
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.find('[data-testid="leonardo-credit-unit-price-usd"]').exists()).toBe(false)
   })
 
   it('allows saving apikey account when backend redacted api_key but credentials_status reports it exists', async () => {

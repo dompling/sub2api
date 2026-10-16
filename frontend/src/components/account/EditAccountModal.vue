@@ -827,9 +827,9 @@
         </div>
       </div>
 
-      <!-- OpenAI / Kiro / Grok OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立区域) -->
+      <!-- OpenAI / Kiro / Grok / Leonardo OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
-        v-if="(account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok') && account.type === 'oauth'"
+        v-if="(account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'leonardo') && account.type === 'oauth'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="oauth-model-mapping-section"
       >
@@ -989,6 +989,21 @@
           data-testid="kiro-credit-unit-price-usd"
         />
         <p class="input-hint">{{ t('admin.accounts.kiroCreditUnitPriceUsdHint') }}</p>
+      </div>
+
+      <!-- Leonardo Cookie 账号的每积分单价：仅用于今日统计估算积分消耗金额，不参与计费 -->
+      <div v-if="isLeonardoCookieAccount" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="input-label">{{ t('admin.accounts.leonardoCreditUnitPriceUsd') }}</label>
+        <input
+          v-model.number="leonardoCreditUnitPriceUsd"
+          type="number"
+          min="0"
+          step="0.0001"
+          class="input"
+          placeholder="0"
+          data-testid="leonardo-credit-unit-price-usd"
+        />
+        <p class="input-hint">{{ t('admin.accounts.leonardoCreditUnitPriceUsdHint') }}</p>
       </div>
 
       <!-- Upstream fields (only for upstream type) -->
@@ -3597,6 +3612,8 @@ const isKiroRelay = computed(() => isKiroRelayAccount(props.account))
 // Kiro 直连 API Key 账号(apikey + 无 base_url):仅这类账号的推理区域由 api_region 控制。
 // OAuth/IdC 账号的 region 是 Identity Center 区域,不参与推理路由,故不展示本字段。
 const isKiroDirectApiKey = computed(() => isKiroDirectApiKeyAccount(props.account))
+// Leonardo Cookie 账号(oauth)消耗 Leonardo 积分;中转账号(apikey)不消耗,故只对前者展示积分单价。
+const isLeonardoCookieAccount = computed(() => props.account?.platform === 'leonardo' && props.account?.type === 'oauth')
 
 const resolveKiroAPIRegionInput = (credentials: Record<string, unknown>) => {
   const value = credentials.api_region
@@ -3624,6 +3641,7 @@ const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
 const editKiroAPIRegion = ref('us-east-1')
 const kiroCreditUnitPriceUsd = ref(0)
+const leonardoCreditUnitPriceUsd = ref(0)
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
 // account_mode 决定额度/余额监控路径，api_protocol 决定转发端点与格式；
@@ -4513,6 +4531,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     ? kiroCreditUnitPrice
     : typeof kiroCreditUnitPrice === 'string'
       ? Number(kiroCreditUnitPrice) || 0
+      : 0
+  const leonardoCreditUnitPrice = extra?.leonardo_credit_unit_price_usd
+  leonardoCreditUnitPriceUsd.value = typeof leonardoCreditUnitPrice === 'number'
+    ? leonardoCreditUnitPrice
+    : typeof leonardoCreditUnitPrice === 'string'
+      ? Number(leonardoCreditUnitPrice) || 0
       : 0
   autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
   autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
@@ -5953,6 +5977,16 @@ const handleSubmit = async () => {
       const newExtra: Record<string, unknown> = { ...currentExtra }
       const unitPrice = Number(kiroCreditUnitPriceUsd.value ?? 0)
       newExtra.kiro_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
+      updatePayload.extra = newExtra
+    }
+
+    // 仅 Leonardo Cookie 账号持久化积分单价;中转账号(apikey)转发到外部上游,不消耗 Leonardo 积分。
+    if (isLeonardoCookieAccount.value) {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      const unitPrice = Number(leonardoCreditUnitPriceUsd.value ?? 0)
+      newExtra.leonardo_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
       updatePayload.extra = newExtra
     }
 

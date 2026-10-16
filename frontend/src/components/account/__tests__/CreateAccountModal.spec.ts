@@ -1253,6 +1253,23 @@ describe('CreateAccountModal Leonardo accounts', () => {
     expect(payload?.credentials).toMatchObject({ cookie: '__Secure-better-auth.session_token=abc' })
   })
 
+  it('sends the Leonardo cookie credit unit price in extra', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-tab-leonardo"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Leonardo cookie')
+    await wrapper.get('[data-testid="leonardo-credit-unit-price-usd"]').setValue('0.0012')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="leonardo-cookie-input"]').setValue('__Secure-better-auth.session_token=abc')
+    await wrapper.get('[data-testid="leonardo-create-account"]').trigger('click')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.type).toBe('oauth')
+    expect(payload?.extra?.leonardo_credit_unit_price_usd).toBe(0.0012)
+  })
+
   it('creates the relay account in one step with base_url and api_key', async () => {
     const wrapper = mountModal()
     await wrapper.get('[data-testid="platform-tab-leonardo"]').trigger('click')
@@ -1267,5 +1284,7 @@ describe('CreateAccountModal Leonardo accounts', () => {
     expect(payload?.platform).toBe('leonardo')
     expect(payload?.type).toBe('apikey')
     expect(payload?.credentials).toMatchObject({ base_url: 'https://relay.example.com', api_key: 'sk-relay' })
+    expect(wrapper.find('[data-testid="leonardo-credit-unit-price-usd"]').exists()).toBe(false)
+    expect(payload?.extra?.leonardo_credit_unit_price_usd).toBeUndefined()
   })
 })
