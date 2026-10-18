@@ -5,7 +5,7 @@
     width="wide"
     @close="handleClose"
   >
-    <!-- Step Indicator for OAuth accounts and Adobe cookie flow -->
+    <!-- Step Indicator for OAuth accounts -->
     <div v-if="needsCredentialStep" class="mb-6 flex items-center justify-center">
       <div class="flex items-center space-x-4">
         <div class="flex items-center">
@@ -70,8 +70,9 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <!-- OAuth / API-key platforms + multi-protocol CN providers: 12 options, 4 cols x 3 rows on desktop -->
-        <div class="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-4" data-tour="account-form-platform">
+        <!-- 14 个平台：手机 3 列、sm 起 5 列的统一容器（grid 间隙即行间，不再单独留白），
+             Kiro 固定在最后一格 -->
+        <div class="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-5" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
@@ -165,7 +166,7 @@
             type="button"
             @click="form.platform = 'codebuddy'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'codebuddy'
                 ? 'bg-white text-violet-600 shadow-sm dark:bg-dark-600 dark:text-violet-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -173,6 +174,19 @@
           >
             <PlatformIcon platform="codebuddy" size="sm" />
             CodeBuddy/WorkBuddy
+          </button>
+          <button
+            type="button"
+            @click="selectTypeSafePlatform()"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === 'typesafe'
+                ? 'bg-white text-sky-700 shadow-sm dark:bg-dark-600 dark:text-sky-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="typesafe" size="sm" />
+            TypeSafe / Jev
           </button>
           <button
             type="button"
@@ -228,6 +242,7 @@
           </button>
           <button
             type="button"
+            data-testid="platform-button-opencode_go"
             @click="selectOpenCodeGoPlatform()"
             :class="[
               'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
@@ -239,6 +254,24 @@
             <PlatformIcon platform="opencode_go" size="sm" />
             OpenCode
           </button>
+          <!-- 没有专属界面的多协议供应商：通用表单（模式 / 协议 / 端点来自 profile） -->
+          <button
+            v-for="spec in extraMultiProtocolPlatforms"
+            :key="spec.id"
+            type="button"
+            :data-testid="`platform-button-${spec.id}`"
+            @click="selectGenericMultiProtocolPlatform(spec.id)"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === spec.id
+                ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-600 dark:text-primary-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon :platform="spec.id" size="sm" />
+            {{ spec.display_name }}
+          </button>
+          <!-- fork 定制：Kiro 专属入口，固定最后一格 -->
           <button
             type="button"
             @click="form.platform = 'kiro'"
@@ -248,6 +281,7 @@
                 ? 'bg-white text-amber-700 shadow-sm dark:bg-dark-600 dark:text-amber-300'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
             ]"
+            data-testid="platform-tab-kiro"
           >
             <svg class="h-4 w-4" viewBox="0 0 1200 1200" fill="none" aria-hidden="true">
               <defs>
@@ -272,17 +306,17 @@
           </button>
           <button
             type="button"
-            @click="form.platform = 'adobe'"
+            @click="form.platform = 'leonardo'"
             :class="[
               'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
-              form.platform === 'adobe'
-                ? 'bg-white text-red-600 shadow-sm dark:bg-dark-600 dark:text-red-400'
+              form.platform === 'leonardo'
+                ? 'bg-white text-violet-600 shadow-sm dark:bg-dark-600 dark:text-violet-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
             ]"
-            data-testid="platform-tab-adobe"
+            data-testid="platform-tab-leonardo"
           >
-            <PlatformIcon platform="adobe" size="sm" />
-            Adobe
+            <PlatformIcon platform="leonardo" size="sm" />
+            Leonardo
           </button>
         </div>
       </div>
@@ -402,8 +436,8 @@
               <Icon name="cloud" size="sm" />
             </div>
             <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">Vertex</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">Service Account</span>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.vertexLabel') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.vertexDesc') }}</span>
             </div>
           </button>
 
@@ -584,6 +618,35 @@
               <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.opencodeGo.accountMode.go') }}</span>
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.opencodeGo.accountMode.goDesc') }}</span>
             </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Account Mode Selection (providers using the generic form) -->
+      <div v-if="isGenericMultiProtocolPlatform && genericAccountModes.length > 1" data-testid="generic-account-mode">
+        <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button
+            v-for="mode in genericAccountModes"
+            :key="mode"
+            type="button"
+            @click="accountMode = mode"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountMode === mode
+                ? cnAccentActiveClass
+                : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountMode === mode ? cnAccentIconClass : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="creditCard" size="sm" />
+            </div>
+            <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ providerModeLabel(mode, t) }}</span>
           </button>
         </div>
       </div>
@@ -857,17 +920,18 @@
             </div>
             <div>
               <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                Vertex
+                {{ t('admin.accounts.vertexLabel') }}
               </span>
               <span class="text-xs text-gray-500 dark:text-gray-400">
-                Service Account
+                {{ t('admin.accounts.vertexGeminiDesc') }}
               </span>
             </div>
           </button>
         </div>
 
         <div
-          v-if="accountCategory === 'apikey'"
+          v-if="accountCategory === 'apikey' && isOfficialGeminiBaseUrl(apiKeyBaseUrl)"
+          data-testid="gemini-apikey-note"
           class="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-800 dark:border-purple-800/40 dark:bg-purple-900/20 dark:text-purple-200"
         >
           <p>{{ t('admin.accounts.gemini.accountType.apiKeyNote') }}</p>
@@ -1095,7 +1159,7 @@
         </div>
 
         <!-- Tier selection (used as fallback when auto-detection is unavailable/fails) -->
-        <div v-if="accountCategory !== 'service_account'" class="mt-4">
+        <div v-if="accountCategory === 'oauth-based'" class="mt-4" data-testid="gemini-oauth-tier">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <div class="mt-2">
             <Select
@@ -1250,8 +1314,8 @@
           </button>
         </div>
       </div>
-      <!-- Adobe: Cookie OAuth vs OpenAI-shaped relay. No official Firefly API Key card. -->
-      <div v-if="form.platform === 'adobe'">
+      <!-- Leonardo: Cookie 原生直连 vs OpenAI 形中转兜底。 -->
+      <div v-if="form.platform === 'leonardo'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
           <button
@@ -1260,12 +1324,12 @@
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
               accountCategory === 'oauth-based'
-                ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
-                : 'border-gray-200 hover:border-red-300 dark:border-dark-600 dark:hover:border-red-700'
+                ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/20'
+                : 'border-gray-200 hover:border-violet-300 dark:border-dark-600 dark:hover:border-violet-700'
             ]"
-            data-testid="adobe-account-type-oauth"
+            data-testid="leonardo-account-type-oauth"
           >
-            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', accountCategory === 'oauth-based' ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', accountCategory === 'oauth-based' ? 'bg-violet-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
               <Icon name="key" size="sm" />
             </div>
             <div class="min-w-0">
@@ -1273,7 +1337,7 @@
                 {{ t('admin.accounts.types.oauth') }}
               </span>
               <span class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.types.adobeOauth') }}
+                {{ t('admin.accounts.types.leonardoOauth') }}
               </span>
             </div>
           </button>
@@ -1286,7 +1350,7 @@
                 ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
                 : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
             ]"
-            data-testid="adobe-account-type-relay"
+            data-testid="leonardo-account-type-relay"
           >
             <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', accountCategory === 'apikey-relay' ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
               <Icon name="cloud" size="sm" />
@@ -1296,10 +1360,86 @@
                 API Key + Base URL
               </span>
               <span class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.types.adobeApikeyRelay') }}
+                {{ t('admin.accounts.types.leonardoApikeyRelay') }}
               </span>
             </div>
           </button>
+        </div>
+      </div>
+      <!-- Leonardo Cookie 账号的每积分单价：仅用于今日统计估算积分消耗金额，不参与计费 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-2">
+        <label class="input-label">{{ t('admin.accounts.leonardoCreditUnitPriceUsd') }}</label>
+        <input
+          v-model.number="leonardoCreditUnitPriceUsd"
+          type="number"
+          min="0"
+          step="0.0001"
+          class="input"
+          placeholder="0"
+          data-testid="leonardo-credit-unit-price-usd"
+        />
+        <p class="input-hint">{{ t('admin.accounts.leonardoCreditUnitPriceUsdHint') }}</p>
+      </div>
+      <!-- Leonardo Cookie 账号的出图上限：超过时按上限出图，再超分回请求尺寸，按交付尺寸计费 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-3" data-testid="leonardo-image-limits">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.leonardoMaxQuality') }}</label>
+          <Select v-model="leonardoImageLimits.maxQuality" :options="leonardoMaxQualityOptions" data-testid="leonardo-max-quality" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.leonardoMaxShortEdge') }}</label>
+            <input
+              v-model.number="leonardoImageLimits.maxShortEdge"
+              type="number"
+              min="0"
+              step="16"
+              class="input"
+              placeholder="0"
+              data-testid="leonardo-max-short-edge"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.leonardoMaxUpscaleFactor') }}</label>
+            <input
+              v-model.number="leonardoImageLimits.maxUpscaleFactor"
+              type="number"
+              min="1"
+              max="4"
+              step="0.1"
+              class="input"
+              placeholder="2"
+              data-testid="leonardo-max-upscale-factor"
+            />
+          </div>
+        </div>
+        <p class="input-hint">{{ t('admin.accounts.leonardoImageLimitsHint') }}</p>
+      </div>
+      <!-- Leonardo 外部中转(API Key + Base URL)：转发到 OpenAI 兼容出图上游，作为原生账号全部故障时的兜底 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'apikey-relay'" class="space-y-4" data-testid="leonardo-relay-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
+          <input
+            v-model="apiKeyBaseUrl"
+            type="text"
+            required
+            class="input"
+            placeholder="https://api.openai.com"
+            data-testid="leonardo-relay-base-url"
+          />
+          <p class="input-hint">{{ t('admin.accounts.leonardo.relayBaseUrlHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <input
+            v-model="apiKeyValue"
+            type="password"
+            required
+            class="input font-mono"
+            placeholder="sk-..."
+            data-testid="leonardo-relay-api-key"
+          />
+          <p class="input-hint">{{ t('admin.accounts.leonardo.relayApiKeyHint') }}</p>
         </div>
       </div>
       <div v-if="form.platform === 'kiro' && accountCategory === 'oauth-based'">
@@ -1560,36 +1700,8 @@
         </div>
       </div>
 
-      <!-- Adobe 外部中转(API Key + Base URL):转发到 OpenAI 兼容出图上游,作为分组灾备 -->
-      <div v-if="form.platform === 'adobe' && accountCategory === 'apikey-relay'" class="space-y-4" data-testid="adobe-relay-fields">
-        <div>
-          <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
-          <input
-            v-model="apiKeyBaseUrl"
-            type="text"
-            required
-            class="input"
-            placeholder="https://your-relay.example.com"
-            data-testid="adobe-relay-base-url"
-          />
-          <p class="input-hint">{{ t('admin.accounts.adobe.relayBaseUrlHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
-          <input
-            v-model="apiKeyValue"
-            type="password"
-            required
-            class="input font-mono"
-            placeholder="sk-..."
-            data-testid="adobe-relay-api-key"
-          />
-          <p class="input-hint">{{ t('admin.accounts.adobe.relayApiKeyHint') }}</p>
-        </div>
-      </div>
-
       <div
-        v-if="form.platform === 'kiro' && (accountCategory === 'apikey' || accountCategory === 'apikey-relay')"
+        v-if="(form.platform === 'kiro' && (accountCategory === 'apikey' || accountCategory === 'apikey-relay'))"
         class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div>
@@ -1749,56 +1861,95 @@
         </div>
       </div>
 
-      <!-- Kiro 只支持模型映射模式，不支持白名单模式 -->
       <div v-if="form.platform === 'kiro'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
-        <div>
+        <div class="mb-4 flex gap-2">
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'whitelist'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'whitelist'
+                ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelWhitelist') }}
+          </button>
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'mapping'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'mapping'
+                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelMapping') }}
+          </button>
+        </div>
+
+        <div v-if="modelRestrictionMode === 'whitelist'">
+          <ModelWhitelistSelector
+            v-model="allowedModels"
+            platform="kiro"
+            :sync-credentials="kiroCreateSyncCredentials"
+            @update:kiroUpstreamIDs="mergeKiroUpstreamIDs"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+            <span v-if="allowedModels.length === 0 && modelMappings.length === 0" data-testid="kiro-default-mapping-hint">{{
+              t('admin.accounts.kiroUsesDefaultMapping')
+            }}</span>
+          </p>
+        </div>
+
+        <div v-else>
           <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
             <p class="text-xs text-purple-700 dark:text-purple-400">
               {{ t('admin.accounts.mapRequestModels') }}
             </p>
           </div>
 
-          <div v-if="kiroModelMappings.length > 0" class="mb-3 space-y-2">
+          <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
             <div
-              v-for="(mapping, index) in kiroModelMappings"
-              :key="getKiroModelMappingKey(mapping)"
-              class="space-y-1"
+              v-for="(mapping, index) in modelMappings"
+              :key="getModelMappingKey(mapping)"
+              class="flex items-center gap-2"
             >
-              <div class="flex items-center gap-2">
-                <input
-                  v-model="mapping.from"
-                  type="text"
-                  :class="[
-                    'input flex-1',
-                    !isValidWildcardPattern(mapping.from) ? 'border-red-500 dark:border-red-500' : ''
-                  ]"
-                  :placeholder="t('admin.accounts.requestModel')"
-                />
-                <svg class="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                </svg>
-                <input
-                  v-model="mapping.to"
-                  type="text"
-                  :class="[
-                    'input flex-1',
-                    mapping.to.includes('*') ? 'border-red-500 dark:border-red-500' : ''
-                  ]"
-                  :placeholder="t('admin.accounts.actualModel')"
-                />
-                <button
-                  type="button"
-                  @click="removeKiroModelMapping(index)"
-                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                >
-                  <Icon name="x" size="sm" />
-                </button>
-              </div>
+              <input
+                v-model="mapping.from"
+                type="text"
+                :class="[
+                  'input flex-1',
+                  !isValidWildcardPattern(mapping.from) ? 'border-red-500 dark:border-red-500' : ''
+                ]"
+                :placeholder="t('admin.accounts.requestModel')"
+              />
+              <svg class="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+              </svg>
+              <input
+                v-model="mapping.to"
+                type="text"
+                :class="[
+                  'input flex-1',
+                  mapping.to.includes('*') ? 'border-red-500 dark:border-red-500' : ''
+                ]"
+                :placeholder="t('admin.accounts.actualModel')"
+              />
+              <button
+                type="button"
+                @click="removeModelMapping(index)"
+                class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+              >
+                <Icon name="x" size="sm" />
+              </button>
             </div>
           </div>
 
-          <button type="button" @click="addKiroModelMapping" class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300">
+          <button type="button" @click="addModelMapping" class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300">
             <svg class="mr-1 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
             </svg>
@@ -1810,7 +1961,7 @@
               v-for="preset in kiroPresetMappings"
               :key="preset.label"
               type="button"
-              @click="addKiroPresetMapping(preset.from, preset.to)"
+              @click="addPresetMapping(preset.from, preset.to)"
               :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
             >
               + {{ preset.label }}
@@ -1873,77 +2024,139 @@
 
       <!-- Vertex Service Account -->
       <div v-if="(form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory === 'service_account'" class="space-y-4">
-        <div>
-          <label class="input-label">Service Account JSON</label>
-          <input
-            ref="vertexServiceAccountFileInput"
-            type="file"
-            accept="application/json,.json"
-            class="hidden"
-            @change="handleVertexServiceAccountFile"
-          />
-          <div
-            :class="[
-              'rounded-lg border-2 border-dashed px-4 py-5 transition-colors',
-              vertexServiceAccountDragActive
-                ? 'border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-900/20'
-                : 'border-gray-300 bg-gray-50 hover:border-sky-400 hover:bg-sky-50/60 dark:border-dark-500 dark:bg-dark-700/40 dark:hover:border-sky-600 dark:hover:bg-sky-900/10'
-            ]"
-            @dragenter.prevent="vertexServiceAccountDragActive = true"
-            @dragover.prevent="vertexServiceAccountDragActive = true"
-            @dragleave.prevent="vertexServiceAccountDragActive = false"
-            @drop.prevent="handleVertexServiceAccountDrop"
-          >
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div class="min-w-0">
-                <div class="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
-                  <Icon name="upload" size="sm" />
-                  <span>{{ vertexClientEmail ? t('admin.accounts.vertexSaJsonLoaded') : t('admin.accounts.vertexSaJsonDrop') }}</span>
-                </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {{ vertexClientEmail ? t('admin.accounts.vertexSaJsonKeyHidden') : t('admin.accounts.vertexSaJsonDropHint') }}
-                </p>
-              </div>
-              <button
-                type="button"
-                class="btn btn-secondary shrink-0"
-                @click="vertexServiceAccountFileInput?.click()"
-              >
-                <Icon name="upload" size="sm" />
-                {{ t('admin.accounts.vertexSaJsonSelectBtn') }}
-              </button>
-            </div>
-            <div
-              v-if="vertexClientEmail"
-              class="mt-3 rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900 dark:border-sky-800/50 dark:bg-dark-800 dark:text-sky-200"
-            >
-              <div class="truncate">Project ID: <span class="font-mono">{{ vertexProjectId }}</span></div>
-              <div class="truncate">Client Email: <span class="font-mono">{{ vertexClientEmail }}</span></div>
-            </div>
+        <div v-if="form.platform === 'gemini'">
+          <label class="input-label">{{ t('admin.accounts.vertexAuthMode') }}</label>
+          <div class="mt-2 flex gap-4">
+            <label class="flex cursor-pointer items-center">
+              <input
+                v-model="vertexAuthMode"
+                type="radio"
+                value="service_account"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.vertexAuthModeServiceAccount') }}</span>
+            </label>
+            <label class="flex cursor-pointer items-center">
+              <input
+                v-model="vertexAuthMode"
+                type="radio"
+                value="apikey"
+                data-testid="vertex-auth-mode-apikey"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.vertexAuthModeApiKey') }}</span>
+            </label>
           </div>
-          <p class="input-hint">{{ t('admin.accounts.vertexSaJsonUploadHint') }}</p>
         </div>
 
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <template v-if="vertexUsesApiKey">
           <div>
-            <label class="input-label">Project ID</label>
+            <label class="input-label">API Key</label>
             <input
-              v-model="vertexProjectId"
-              type="text"
+              v-model="vertexApiKey"
+              type="password"
+              required
               class="input font-mono"
-              readonly
-              :placeholder="t('admin.accounts.vertexProjectIdPlaceholder')"
+              data-testid="vertex-api-key-input"
             />
+            <p class="input-hint">{{ t('admin.accounts.vertexApiKeyHint') }}</p>
           </div>
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label class="input-label">Project ID</label>
+              <input
+                v-model="vertexProjectId"
+                type="text"
+                class="input font-mono"
+                data-testid="vertex-api-key-project-id-input"
+                :placeholder="t('admin.accounts.vertexApiKeyProjectIdPlaceholder')"
+              />
+              <p class="input-hint">{{ t('admin.accounts.vertexApiKeyProjectIdHint') }}</p>
+            </div>
+            <div v-if="vertexProjectId.trim()">
+              <label class="input-label">Location</label>
+              <Select
+                v-model="vertexLocation"
+                :options="VERTEX_LOCATION_SELECT_OPTIONS"
+              />
+              <p class="input-hint">{{ t('admin.accounts.vertexLocationHint') }}</p>
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
           <div>
-            <label class="input-label">Location</label>
-            <Select
-              v-model="vertexLocation"
-              :options="VERTEX_LOCATION_SELECT_OPTIONS"
+            <label class="input-label">Service Account JSON</label>
+            <input
+              ref="vertexServiceAccountFileInput"
+              type="file"
+              accept="application/json,.json"
+              class="hidden"
+              @change="handleVertexServiceAccountFile"
             />
-            <p class="input-hint">{{ t('admin.accounts.vertexLocationHint') }}</p>
+            <div
+              :class="[
+                'rounded-lg border-2 border-dashed px-4 py-5 transition-colors',
+                vertexServiceAccountDragActive
+                  ? 'border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-900/20'
+                  : 'border-gray-300 bg-gray-50 hover:border-sky-400 hover:bg-sky-50/60 dark:border-dark-500 dark:bg-dark-700/40 dark:hover:border-sky-600 dark:hover:bg-sky-900/10'
+              ]"
+              @dragenter.prevent="vertexServiceAccountDragActive = true"
+              @dragover.prevent="vertexServiceAccountDragActive = true"
+              @dragleave.prevent="vertexServiceAccountDragActive = false"
+              @drop.prevent="handleVertexServiceAccountDrop"
+            >
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
+                    <Icon name="upload" size="sm" />
+                    <span>{{ vertexClientEmail ? t('admin.accounts.vertexSaJsonLoaded') : t('admin.accounts.vertexSaJsonDrop') }}</span>
+                  </div>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ vertexClientEmail ? t('admin.accounts.vertexSaJsonKeyHidden') : t('admin.accounts.vertexSaJsonDropHint') }}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-secondary shrink-0"
+                  @click="vertexServiceAccountFileInput?.click()"
+                >
+                  <Icon name="upload" size="sm" />
+                  {{ t('admin.accounts.vertexSaJsonSelectBtn') }}
+                </button>
+              </div>
+              <div
+                v-if="vertexClientEmail"
+                class="mt-3 rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900 dark:border-sky-800/50 dark:bg-dark-800 dark:text-sky-200"
+              >
+                <div class="truncate">Project ID: <span class="font-mono">{{ vertexProjectId }}</span></div>
+                <div class="truncate">Client Email: <span class="font-mono">{{ vertexClientEmail }}</span></div>
+              </div>
+            </div>
+            <p class="input-hint">{{ t('admin.accounts.vertexSaJsonUploadHint') }}</p>
           </div>
-        </div>
+
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label class="input-label">Project ID</label>
+              <input
+                v-model="vertexProjectId"
+                type="text"
+                class="input font-mono"
+                readonly
+                :placeholder="t('admin.accounts.vertexProjectIdPlaceholder')"
+              />
+            </div>
+            <div>
+              <label class="input-label">Location</label>
+              <Select
+                v-model="vertexLocation"
+                :options="VERTEX_LOCATION_SELECT_OPTIONS"
+              />
+              <p class="input-hint">{{ t('admin.accounts.vertexLocationHint') }}</p>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- Antigravity model restriction (applies to OAuth + Upstream) -->
@@ -2064,8 +2277,8 @@
         </div>
       </div>
 
-      <!-- API Key input (only for apikey type, excluding Antigravity / Kiro / Adobe which have their own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe'" class="space-y-4">
+      <!-- API Key input (only for apikey type, excluding Antigravity / Kiro which have their own fields) -->
+      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'leonardo'" class="space-y-4">
         <div v-if="!isMultiProtocolPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -2084,7 +2297,7 @@
             v-if="isCNPlatform && !isOpenCodeGoPlatform"
             class="mt-2"
             :platform="cnPresetPlatform"
-            :mode="accountMode"
+            :mode="cnPresetMode"
             :protocol="apiProtocol"
             :current-url="apiKeyBaseUrl"
             @select="onCnPresetSelect"
@@ -2105,14 +2318,15 @@
               />
             </div>
           </div>
-          <p v-if="!cnSupportsNativeResponses(form.platform)" class="input-hint">
+          <p v-if="!cnSupportsNativeResponses(form.platform, currentOpenCodeOrCNMode())" class="input-hint">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
         <OpenCodeGoProtocolRulesEditor
-          v-if="isOpenCodeGoPlatform && apiProtocol === 'adaptive'"
+          v-if="routesByModel && apiProtocol === 'adaptive'"
           v-model:rows="openCodeGoProtocolRules"
-          :plan="openCodeAccountMode"
+          :platform="form.platform"
+          :plan="currentOpenCodeOrCNMode()"
         />
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
@@ -2144,9 +2358,9 @@
         </div>
 
         <!-- Gemini API Key tier selection -->
-        <div v-if="form.platform === 'gemini'">
+        <div v-if="form.platform === 'gemini' && isOfficialGeminiBaseUrl(apiKeyBaseUrl)">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
-          <Select v-model="geminiTierAIStudio" :options="geminiTierAIStudioOptions" />
+          <Select v-model="geminiTierAIStudio" :options="geminiTierAIStudioOptions" data-testid="gemini-apikey-tier" />
           <p class="input-hint">{{ t('admin.accounts.gemini.tier.aiStudioHint') }}</p>
         </div>
 
@@ -2222,6 +2436,7 @@
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector
                 v-model="allowedModels"
+                :model-mappings="modelMappings"
                 :platform="form.platform"
                 :sync-credentials="syncPreviewCredentials"
                 @upstream-synced="upstreamModelsPreviewed = true"
@@ -2401,6 +2616,48 @@
             />
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}
+            </p>
+          </div>
+        </div>
+
+        <!-- Gemini 显式缓存上游开关：仅自定义地址的 Gemini API Key 账号 -->
+        <div
+          v-if="form.platform === 'gemini' && !isOfficialGeminiBaseUrl(apiKeyBaseUrl)"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+          data-testid="explicit-cache-upstream-section"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <label class="input-label mb-0">{{ t('admin.accounts.explicitCacheUpstream') }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.explicitCacheUpstreamHint') }}
+              </p>
+            </div>
+            <Toggle
+              v-model="explicitCacheUpstreamEnabled"
+              data-testid="explicit-cache-upstream-toggle"
+              :aria-label="t('admin.accounts.explicitCacheUpstream')"
+            />
+          </div>
+          <div v-if="explicitCacheUpstreamEnabled" class="mt-3 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
+            <p class="text-xs text-blue-700 dark:text-blue-400">
+              <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
+              {{ t('admin.accounts.explicitCacheUpstreamInfo') }}
+            </p>
+          </div>
+          <div v-if="explicitCacheUpstreamEnabled" class="mt-3">
+            <label class="input-label">{{ t('admin.accounts.explicitCacheUpstreamMaxTTL') }}</label>
+            <input
+              v-model="explicitCacheUpstreamMaxTTL"
+              data-testid="explicit-cache-upstream-max-ttl"
+              type="number"
+              min="1"
+              step="1"
+              class="input"
+              placeholder="86400"
+            />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.explicitCacheUpstreamMaxTTLHint') }}
             </p>
           </div>
         </div>
@@ -2675,6 +2932,7 @@
           <div v-if="modelRestrictionMode === 'whitelist'">
             <ModelWhitelistSelector
               v-model="allowedModels"
+              :model-mappings="modelMappings"
               platform="anthropic"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
@@ -2967,10 +3225,9 @@
         </div>
       </div>
 
-      <!-- OpenAI / Grok / CodeBuddy / Adobe 模型限制（这些类型没有 apikey 容器，需要独立的区域） -->
-      <!-- 注意括号：isOAuthFlow 对 Adobe 显式返回 false（cookie 建号，没有授权重定向环节） -->
+      <!-- OpenAI / Grok / CodeBuddy / Leonardo 模型限制（这些类型没有 apikey 容器，需要独立的区域） -->
       <div
-        v-if="((form.platform === 'openai' || form.platform === 'grok' || form.platform === 'codebuddy') && isOAuthFlow) || form.platform === 'adobe'"
+        v-if="((form.platform === 'openai' || form.platform === 'grok' || form.platform === 'codebuddy') && isOAuthFlow) || form.platform === 'leonardo'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="oauth-model-restriction-section"
       >
@@ -3018,6 +3275,7 @@
           <div v-if="modelRestrictionMode === 'whitelist'">
             <ModelWhitelistSelector
               v-model="allowedModels"
+              :model-mappings="modelMappings"
               :platform="form.platform"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
@@ -3216,6 +3474,44 @@
                     class="input"
                     :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
                   />
+                </div>
+                <div class="sm:col-span-2">
+                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.scope') }}</label>
+                  <div
+                    class="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                    role="radiogroup"
+                    :aria-label="t('admin.accounts.tempUnschedulable.scope')"
+                  >
+                    <button
+                      v-for="option in tempUnschedScopeOptions"
+                      :key="option.value"
+                      type="button"
+                      role="radio"
+                      :aria-checked="rule.scope === option.value"
+                      :data-testid="`temp-unsched-scope-${option.value}`"
+                      @click="rule.scope = option.value"
+                      :class="[
+                        'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+                        rule.scope === option.value
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
+                      ]"
+                    >
+                      <span
+                        :class="[
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2',
+                          rule.scope === option.value ? 'border-primary-500' : 'border-gray-300 dark:border-dark-500'
+                        ]"
+                      >
+                        <span v-if="rule.scope === option.value" class="h-1.5 w-1.5 rounded-full bg-primary-500" />
+                      </span>
+                      <span>
+                        <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ option.label }}</span>
+                        <span class="text-xs text-gray-500 dark:text-gray-400">{{ option.description }}</span>
+                      </span>
+                    </button>
+                  </div>
+                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.scopeHint') }}</p>
                 </div>
                 <div class="sm:col-span-2">
                   <label class="input-label">{{ t('admin.accounts.tempUnschedulable.keywords') }}</label>
@@ -3781,7 +4077,7 @@
         </div>
       </div>
 
-      <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
+      <!-- OpenAI WS Mode（off/ctx_pool/passthrough/http_bridge/ws_bridge） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
@@ -4226,42 +4522,20 @@
 
     </form>
 
-    <!-- Step 2: OAuth Authorization / Adobe credentials -->
+    <!-- Step 2: OAuth Authorization / Leonardo credentials -->
     <div v-else class="space-y-5">
-      <!-- Adobe：长期凭据是 cookie，短期 access_token 由后台刷新器维护 -->
-      <div v-if="form.platform === 'adobe'" class="space-y-4">
+      <!-- Leonardo：长期凭据是 Better Auth cookie，JWT 由后台刷新器维护。 -->
+      <div v-if="form.platform === 'leonardo'" class="space-y-4">
         <div>
-          <label class="input-label">{{ t('admin.accounts.adobe.cookieLabel') }}</label>
+          <label class="input-label">{{ t('admin.accounts.leonardo.cookieLabel') }}</label>
           <textarea
-            v-model="adobeCookie"
-            rows="4"
+            v-model="leonardoCookie"
+            rows="6"
             class="input font-mono text-xs"
-            :placeholder="t('admin.accounts.adobe.cookiePlaceholder')"
-            data-testid="adobe-cookie-input"
+            :placeholder="t('admin.accounts.leonardo.cookiePlaceholder')"
+            data-testid="leonardo-cookie-input"
           ></textarea>
-          <p class="input-hint">{{ t('admin.accounts.adobe.cookieHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.adobe.accessTokenLabel') }}</label>
-          <input
-            v-model="adobeAccessToken"
-            type="password"
-            class="input font-mono"
-            autocomplete="off"
-            data-testid="adobe-access-token-input"
-          />
-          <p class="input-hint">{{ t('admin.accounts.adobe.accessTokenHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.adobe.arpLabel') }}</label>
-          <textarea
-            v-model="adobeArpSession"
-            rows="3"
-            class="input font-mono text-xs"
-            :placeholder="t('admin.accounts.adobe.arpPlaceholder')"
-            data-testid="adobe-arp-input"
-          ></textarea>
-          <p class="input-hint">{{ t('admin.accounts.adobe.arpHint') }}</p>
+          <p class="input-hint">{{ t('admin.accounts.leonardo.cookieHint') }}</p>
         </div>
       </div>
       <div v-else-if="isKiroImportMode" class="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
@@ -4302,7 +4576,7 @@
         </div>
       </div>
       <OAuthAuthorizationFlow
-        v-else
+        v-else-if="form.platform !== 'leonardo'"
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -4390,12 +4664,12 @@
           {{ t('common.back') }}
         </button>
         <button
-          v-if="form.platform === 'adobe'"
+          v-if="form.platform === 'leonardo'"
           type="button"
           :disabled="submitting"
           class="btn btn-primary"
-          data-testid="adobe-create-account"
-          @click="handleAdobeCreate"
+          data-testid="leonardo-create-account"
+          @click="handleLeonardoCreate"
         >
           {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
         </button>
@@ -4690,7 +4964,6 @@ import {
   commonErrorCodes,
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
-  fetchKiroDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 import { adminAPI } from '@/api/admin'
@@ -4717,11 +4990,18 @@ import type {
   CodexSessionImportMessage,
   OpenAICompactMode,
   OpenAIResponsesMode,
-  OpenAIEndpointCapability
+  OpenAIEndpointCapability,
+  TempUnschedulableScope
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import {
+  LEONARDO_MAX_QUALITY_VALUES,
+  applyLeonardoImageLimitsToExtra,
+  defaultLeonardoImageLimits,
+  type LeonardoImageLimitsForm
+} from '@/utils/leonardoImageLimits'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -4733,6 +5013,7 @@ import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
+import { applyExplicitCacheUpstreamCredentials, isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
 import OpenCodeGoProtocolRulesEditor from '@/components/account/OpenCodeGoProtocolRulesEditor.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
@@ -4746,8 +5027,15 @@ import {
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
   defaultOpenCodeProtocolRules,
+  defaultProviderProtocolRules,
   isCNProviderPlatform,
   isHeaderOverrideCapable,
+  isMultiProtocolApiKeyPlatform,
+  providerAccountModes,
+  providerModeLabel,
+  providerNativeProtocols,
+  providerRoutesByModel,
+  resolveProviderAccountMode,
   validateHeaderOverrideRows,
   type CnAccountMode,
   type CnApiProtocol,
@@ -4757,13 +5045,13 @@ import {
   type OpenCodeAccountMode,
   type OpenCodeGoProtocolRule
 } from '@/components/account/credentialsBuilder'
+import { listPlatforms } from '@/constants/platformCatalog'
 import {
   formatDateTimeLocalInput,
   getBrowserTimeZone,
   parseDateTimeLocalInput
 } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
-import { extractAdobeAccessTokenFromCookieInput, extractAdobeAccessTokenInput, extractAdobeArpFromCookieInput, extractAdobeArpSessionInput, extractAdobeCookieInput } from '@/utils/adobeAccount'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { VERTEX_LOCATION_SELECT_OPTIONS, BEDROCK_REGION_SELECT_OPTIONS } from '@/constants/account'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
@@ -4772,6 +5060,7 @@ import {
   OPENAI_WS_MODE_OFF,
   OPENAI_WS_MODE_PASSTHROUGH,
   OPENAI_WS_MODE_HTTP_BRIDGE,
+  OPENAI_WS_MODE_WS_BRIDGE,
   isOpenAIWSModeEnabled,
   resolveOpenAIWSModeHintKey,
   type OpenAIWSMode
@@ -4800,7 +5089,6 @@ const { t } = useI18n()
 const browserTimeZone = getBrowserTimeZone()
 
 const oauthStepTitle = computed(() => {
-  if (form.platform === 'adobe') return t('admin.accounts.adobe.credentialStepTitle')
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
@@ -4834,7 +5122,8 @@ const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'kiro') return t('admin.accounts.kiro.apiKeyHint')
-  if (form.platform === 'grok') return ''
+  // Grok 与多协议供应商没有对应的说明文案；通用文案指 Claude Console Key。
+  if (form.platform === 'grok' || isMultiProtocolPlatform.value) return ''
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -4851,6 +5140,8 @@ const apiKeyBaseUrlPlaceholder = computed(() => {
       return 'https://generativelanguage.googleapis.com'
     case 'grok':
       return 'https://api.x.ai/v1'
+    case 'typesafe':
+      return 'https://api.typesafe.ai'
     default:
       return 'https://api.anthropic.com'
   }
@@ -4861,7 +5152,7 @@ const apiKeyValuePlaceholder = computed(() => {
     case 'openai':
       return 'sk-proj-...'
     case 'gemini':
-      return 'AIza...'
+      return 'AQ.Ab...'
     case 'grok':
       return 'xai-...'
     case 'kimi':
@@ -4873,8 +5164,10 @@ const apiKeyValuePlaceholder = computed(() => {
     case 'minimax':
     case 'opencode_go':
       return 'sk-...'
+    case 'typesafe':
+      return 'ts-...'
     default:
-      return 'sk-ant-...'
+      return isMultiProtocolPlatform.value ? 'sk-...' : 'sk-ant-...'
   }
 })
 
@@ -4967,6 +5260,8 @@ interface TempUnschedRuleForm {
   keywords: string
   duration_minutes: number | null
   description: string
+  // 作用范围：account 暂停整个账号，model 只冷却本次请求的模型。
+  scope: TempUnschedulableScope
 }
 
 // State
@@ -4981,25 +5276,11 @@ const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 const kiroAPIRegion = ref('us-east-1')
-// Adobe：cookie 是长期凭据，access_token 可留空（首次刷新时用 cookie 换取）
-const adobeCookie = ref('')
-const adobeAccessToken = ref('')
-const adobeArpSession = ref('')
 const upstreamBillingAutoProbeEnabled = ref(true)
 
-watch(adobeCookie, (value) => {
-  if (!adobeArpSession.value.trim()) {
-    const arp = extractAdobeArpFromCookieInput(value)
-    if (arp) adobeArpSession.value = arp
-  }
-  if (!adobeAccessToken.value.trim()) {
-    const token = extractAdobeAccessTokenFromCookieInput(value)
-    if (token) adobeAccessToken.value = token
-  }
-})
-
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）账号类型、API 协议与端点 ──
-const accountMode = ref<CnAccountMode>('payg')
+// 多协议供应商（国产厂商与走通用表单的供应商）的接入模式；OpenCode 用 openCodeAccountMode。
+const accountMode = ref<string>('payg')
 const openCodeAccountMode = ref<OpenCodeAccountMode>('zen')
 // API 协议决定转发端点与格式：cc=现有转换链，anthropic=原生直通（Claude Code），
 // responses=deepseek / kimi 原生 Responses 端点（Codex）。与账号类型正交。
@@ -5017,8 +5298,19 @@ const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
 })
 const isCNPlatform = computed(() => isCNProviderPlatform(form.platform))
 const isOpenCodeGoPlatform = computed(() => form.platform === 'opencode_go')
-const isMultiProtocolPlatform = computed(() => isCNPlatform.value || isOpenCodeGoPlatform.value)
-function currentOpenCodeOrCNMode(): CnAccountMode | OpenCodeAccountMode {
+const isMultiProtocolPlatform = computed(() => isMultiProtocolApiKeyPlatform(form.platform))
+// 前端没有专属界面、走通用表单的多协议供应商：模式、协议、默认端点
+// 与分流规则全部来自平台清单中的 profile。
+const isGenericMultiProtocolPlatform = computed(
+  () => isMultiProtocolPlatform.value && !isCNPlatform.value && !isOpenCodeGoPlatform.value
+)
+const extraMultiProtocolPlatforms = computed(() =>
+  listPlatforms().filter(spec => !!spec.multi_protocol && !isCNProviderPlatform(spec.id) && spec.id !== 'opencode_go')
+)
+const genericAccountModes = computed(() => providerAccountModes(form.platform))
+// 按模型分流的供应商（OpenCode 等）：adaptive 账号携带 protocol_rules。
+const routesByModel = computed(() => providerRoutesByModel(form.platform))
+function currentOpenCodeOrCNMode(): string {
   return isOpenCodeGoPlatform.value ? openCodeAccountMode.value : accountMode.value
 }
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
@@ -5029,35 +5321,31 @@ const cnPresetPlatform = computed<CnProviderPlatform>(() => {
   }
   return 'kimi'
 })
-const adaptivePresetPlatform = computed<CnProviderPlatform | 'opencode_go'>(() => {
-  if (form.platform === 'opencode_go') return 'opencode_go'
+// 国产厂商的接入模式只有 payg / coding（selectCNPlatform 已按 profile 规范化）。
+const cnPresetMode = computed<CnAccountMode>(() => (accountMode.value === 'coding' ? 'coding' : 'payg'))
+const adaptivePresetPlatform = computed<string>(() => {
+  if (isMultiProtocolPlatform.value) return form.platform
   return cnPresetPlatform.value
 })
-// 当前平台可选的协议档（responses 仅 deepseek / kimi）。
-const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
-  const opts: Array<{ value: CnApiProtocol; labelKey: string }> = [
-    { value: 'adaptive', labelKey: 'adaptive' },
-    { value: 'chat_completions', labelKey: 'chatCompletions' },
-    { value: 'anthropic', labelKey: 'anthropic' }
-  ]
-  if (cnSupportsNativeResponses(form.platform)) {
-    opts.push({ value: 'responses', labelKey: 'responses' })
-  }
-  return opts
-})
-const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() => {
-  const opts: Array<{ value: CnNativeApiProtocol; labelKey: string }> = [
-    { value: 'chat_completions', labelKey: 'chatCompletions' },
-    { value: 'anthropic', labelKey: 'anthropic' }
-  ]
-  if (cnSupportsNativeResponses(form.platform)) opts.push({ value: 'responses', labelKey: 'responses' })
-  return opts
-})
+const NATIVE_PROTOCOL_LABEL_KEYS: Record<CnNativeApiProtocol, string> = {
+  chat_completions: 'chatCompletions',
+  anthropic: 'anthropic',
+  responses: 'responses'
+}
+// 当前平台与接入模式提供原生端点的协议（profile 中有默认基址的协议）。
+const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() =>
+  providerNativeProtocols(form.platform, currentOpenCodeOrCNMode()).map(value => ({
+    value,
+    labelKey: NATIVE_PROTOCOL_LABEL_KEYS[value]
+  }))
+)
+// 可选的协议档：adaptive 加上各原生协议（responses 仅 deepseek / kimi 等提供原生端点的供应商）。
+const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => [
+  { value: 'adaptive', labelKey: 'adaptive' },
+  ...cnAdaptiveProtocolOptions.value
+])
 
-function resetAdaptiveBaseUrls(
-  platform: CnProviderPlatform | 'opencode_go',
-  mode: CnAccountMode | OpenCodeAccountMode
-) {
+function resetAdaptiveBaseUrls(platform: string, mode: string) {
   adaptiveBaseUrls.value = defaultCNAdaptiveBaseUrls(platform, mode)
 }
 // 当前选中平台的品牌色（选中卡片描边 / 图标底色），与 platformColors 取色一致。
@@ -5100,9 +5388,8 @@ function selectCNPlatform(platform: CnProviderPlatform) {
   form.type = 'apikey'
   accountCategory.value = 'apikey'
   apiProtocol.value = 'adaptive'
-  if (platform === 'deepseek') {
-    accountMode.value = 'payg'
-  }
+  // deepseek 无 coding 套餐（profile 仅 payg）；从其他供应商切换来的未知模式回落默认模式。
+  accountMode.value = resolveProviderAccountMode(platform, accountMode.value)
   apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
   resetAdaptiveBaseUrls(platform, accountMode.value)
 }
@@ -5115,6 +5402,23 @@ function selectOpenCodeGoPlatform() {
   apiKeyBaseUrl.value = defaultCNBaseUrl('opencode_go', openCodeAccountMode.value, 'adaptive')
   resetAdaptiveBaseUrls('opencode_go', openCodeAccountMode.value)
   openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultOpenCodeProtocolRules(openCodeAccountMode.value))
+}
+function selectTypeSafePlatform() {
+  form.platform = 'typesafe'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiKeyBaseUrl.value = 'https://api.typesafe.ai'
+  allowedModels.value = ['jev-latest']
+}
+function selectGenericMultiProtocolPlatform(platform: string) {
+  form.platform = platform
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiProtocol.value = 'adaptive'
+  accountMode.value = resolveProviderAccountMode(platform, undefined)
+  apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
+  resetAdaptiveBaseUrls(platform, accountMode.value)
+  openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultProviderProtocolRules(platform, accountMode.value))
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(openCodeAccountMode, (mode, previousMode) => {
@@ -5138,6 +5442,12 @@ watch(openCodeAccountMode, (mode, previousMode) => {
 })
 watch(accountMode, (mode, previousMode) => {
   if (!isMultiProtocolPlatform.value || isOpenCodeGoPlatform.value) return
+  if (routesByModel.value) {
+    const previousRules = JSON.stringify(defaultProviderProtocolRules(form.platform, previousMode))
+    if (JSON.stringify(openCodeGoProtocolRules.value) === previousRules) {
+      openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultProviderProtocolRules(form.platform, mode))
+    }
+  }
   if (apiProtocol.value === 'adaptive') {
     const previousDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, previousMode)
     const nextDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, mode)
@@ -5203,21 +5513,13 @@ const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
 
-// Adobe 用通用的「模型限制」区块（白名单 / 映射双模式），默认给空白名单。
-//
-// 空白名单 = 不下发 model_mapping = 后端回落到 DefaultAdobeModelMapping（17 条）。
-// 刻意不预勾 13 个对外名：预勾会把历史别名 gpt-image / gpt-image-1 /
-// gpt-image-1-mini / gpt-image-2.5-prism 挡在门外，而运维八成不知道自己丢了它们。
-const applyAdobeModelRestrictionDefaults = () => {
-  modelRestrictionMode.value = 'whitelist'
-  allowedModels.value = []
-  modelMappings.value = []
-}
 const upstreamModelsPreviewed = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
 const poolModeEnabled = ref(false)
+const explicitCacheUpstreamEnabled = ref(false)
+const explicitCacheUpstreamMaxTTL = ref<string | number>('')
 const poolModeRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
 const poolModeRetryStatusCodesInput = ref('')
 
@@ -5357,7 +5659,68 @@ const kiroImportTokenPlaceholder = computed(() => {
     ? '{"accessToken":"...","refreshToken":"...","clientIdHash":"...","authMethod":"IdC","provider":"' + kiroImportProvider.value + '"}'
     : '{"accessToken":"...","refreshToken":"...","authMethod":"social","provider":"' + kiroImportProvider.value + '"}'
 })
-const kiroModelMappings = ref<ModelMapping[]>([])
+// Leonardo：长期凭据是浏览器 cookie；粘贴支持完整 k=v 串或裸 session token。
+const leonardoCookie = ref('')
+const leonardoCreditUnitPriceUsd = ref(0)
+const leonardoImageLimits = ref<LeonardoImageLimitsForm>(defaultLeonardoImageLimits())
+const leonardoMaxQualityOptions = computed(() => [
+  { value: '', label: t('admin.accounts.leonardoMaxQualityUnlimited') },
+  ...LEONARDO_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
+])
+const kiroUpstreamIDs = ref<Record<string, string>>({})
+const mergeKiroUpstreamIDs = (ids: Record<string, string>) => {
+  kiroUpstreamIDs.value = { ...kiroUpstreamIDs.value, ...ids }
+}
+const kiroCreateSyncCredentials = computed(() => {
+  if (form.platform !== 'kiro' || !apiKeyValue.value.trim()) return undefined
+  if (accountCategory.value === 'apikey') {
+    return { platform: 'kiro', type: 'apikey', api_key: apiKeyValue.value.trim() }
+  }
+  if (accountCategory.value === 'apikey-relay' && apiKeyBaseUrl.value.trim()) {
+    return {
+      platform: 'kiro',
+      type: 'apikey',
+      base_url: apiKeyBaseUrl.value.trim(),
+      api_key: apiKeyValue.value.trim()
+    }
+  }
+  return undefined
+})
+// Leonardo Cookie 建号：cookie 必填；空白名单 = 不下发 model_mapping，
+// 由后端回落到平台默认映射。
+const handleLeonardoCreate = async () => {
+  if (!form.name.trim()) {
+    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+    return
+  }
+  const cookie = leonardoCookie.value.trim()
+  if (!cookie) {
+    appStore.showError(t('admin.accounts.leonardo.cookieRequired'))
+    return
+  }
+
+  const credentials: Record<string, unknown> = {
+    cookie
+  }
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  }
+
+  await createAccountAndFinish('leonardo', 'oauth' as AccountType, credentials)
+}
+
+const buildCreateKiroMapping = (direct: boolean) =>
+  buildModelMappingObject(
+    'combined',
+    allowedModels.value,
+    modelMappings.value,
+    direct ? { kiroDirect: true, kiroUpstreamIDs: kiroUpstreamIDs.value } : undefined
+  )
 const kiroCreditUnitPriceUsd = ref(0)
 const kiroPresetMappings = computed(() => getPresetMappingsByPlatform('kiro'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
@@ -5376,12 +5739,22 @@ const vertexProjectId = ref('')
 const vertexClientEmail = ref('')
 const vertexLocation = ref('global')
 const vertexServiceAccountDragActive = ref(false)
+const vertexAuthMode = ref<'service_account' | 'apikey'>('service_account')
+const vertexApiKey = ref('')
+// API Key 认证只对 Gemini 平台开放，Anthropic 平台的 Vertex 账号始终使用 Service Account JSON。
+const vertexUsesApiKey = computed(() => form.platform === 'gemini' && vertexAuthMode.value === 'apikey')
+// 两种认证方式的 Project ID 来源不同（JSON 读取 / 手填），切换时清空凭证字段避免串用。
+watch(vertexAuthMode, () => {
+  vertexServiceAccountJson.value = ''
+  vertexProjectId.value = ''
+  vertexClientEmail.value = ''
+  vertexApiKey.value = ''
+})
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-model-mapping')
 const getOpenAICompactModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-openai-compact-model-mapping')
 const getAntigravityModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-antigravity-model-mapping')
-const getKiroModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-kiro-model-mapping')
 const getTempUnschedRuleKey = createStableObjectKeyResolver<TempUnschedRuleForm>('create-temp-unsched-rule')
 const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('google_one')
 const geminiAIStudioOAuthEnabled = ref(false)
@@ -5556,7 +5929,8 @@ const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_OFF, label: t('admin.accounts.openai.wsModeOff') },
   { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
   { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') },
-  { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') }
+  { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') },
+  { value: OPENAI_WS_MODE_WS_BRIDGE, label: t('admin.accounts.openai.wsModeWsBridge') }
 ])
 
 const openaiResponsesWebSocketV2Mode = computed({
@@ -5607,6 +5981,19 @@ const geminiHelpLinks = {
 
 // Computed: current preset mappings based on platform
 const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
+const tempUnschedScopeOptions = computed<Array<{ value: TempUnschedulableScope; label: string; description: string }>>(() => [
+  {
+    value: 'model',
+    label: t('admin.accounts.tempUnschedulable.scopeModel'),
+    description: t('admin.accounts.tempUnschedulable.scopeModelDesc')
+  },
+  {
+    value: 'account',
+    label: t('admin.accounts.tempUnschedulable.scopeAccount'),
+    description: t('admin.accounts.tempUnschedulable.scopeAccountDesc')
+  }
+])
+
 const tempUnschedPresets = computed(() => [
   {
     label: t('admin.accounts.tempUnschedulable.presets.overloadLabel'),
@@ -5614,7 +6001,8 @@ const tempUnschedPresets = computed(() => [
       error_code: 529,
       keywords: 'overloaded, too many',
       duration_minutes: 60,
-      description: t('admin.accounts.tempUnschedulable.presets.overloadDesc')
+      description: t('admin.accounts.tempUnschedulable.presets.overloadDesc'),
+      scope: 'model' as const
     }
   },
   {
@@ -5623,7 +6011,8 @@ const tempUnschedPresets = computed(() => [
       error_code: 429,
       keywords: 'rate limit, too many requests',
       duration_minutes: 10,
-      description: t('admin.accounts.tempUnschedulable.presets.rateLimitDesc')
+      description: t('admin.accounts.tempUnschedulable.presets.rateLimitDesc'),
+      scope: 'model' as const
     }
   },
   {
@@ -5632,7 +6021,8 @@ const tempUnschedPresets = computed(() => [
       error_code: 503,
       keywords: 'unavailable, maintenance',
       duration_minutes: 30,
-      description: t('admin.accounts.tempUnschedulable.presets.unavailableDesc')
+      description: t('admin.accounts.tempUnschedulable.presets.unavailableDesc'),
+      scope: 'model' as const
     }
   }
 ])
@@ -5654,6 +6044,11 @@ const form = reactive({
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
+  // Leonardo 的长期凭据是浏览器 cookie，没有授权重定向环节（两步建号由
+  // needsCredentialStep 单独处理）。
+  if (form.platform === 'leonardo') {
+    return false
+  }
   // Antigravity upstream 类型不需要 OAuth 流程
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
@@ -5662,16 +6057,13 @@ const isOAuthFlow = computed(() => {
   if (form.platform === 'anthropic' && accountCategory.value === 'bedrock') {
     return false
   }
-  // Adobe 的长期凭据是浏览器 cookie，没有授权重定向环节，直接建号。
-  if (form.platform === 'adobe') {
-    return false
-  }
   return accountCategory.value === 'oauth-based'
 })
 
-// Adobe 与 OAuth 一样分两步：第一步基础信息，第二步再填凭据。
+// Leonardo 与 OAuth 一样分两步：第一步基础信息，第二步再粘贴 cookie；
+// 中转（apikey-relay）单步直接建号。
 const needsCredentialStep = computed(() =>
-  isOAuthFlow.value || (form.platform === 'adobe' && accountCategory.value !== 'apikey-relay')
+  isOAuthFlow.value || (form.platform === 'leonardo' && accountCategory.value !== 'apikey-relay')
 )
 
 const isKiroImportMode = computed(() => form.platform === 'kiro' && kiroAccountType.value === 'import')
@@ -5722,6 +6114,8 @@ watch(
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
+      // Leonardo 留空白名单：不下发 model_mapping = 后端回落默认映射。
+      if (form.platform === 'leonardo') return
       allowedModels.value = [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
@@ -5731,16 +6125,14 @@ watch(
         })
         antigravityWhitelistModels.value = []
       } else if (form.platform === 'kiro') {
-        fetchKiroDefaultMappings().then(mappings => {
-          kiroModelMappings.value = [...mappings]
-        })
-      } else if (form.platform === 'adobe') {
-        applyAdobeModelRestrictionDefaults()
+        allowedModels.value = []
+        modelMappings.value = []
+        modelRestrictionMode.value = 'whitelist'
+        kiroUpstreamIDs.value = {}
       } else {
         antigravityWhitelistModels.value = []
         antigravityModelMappings.value = []
         antigravityModelRestrictionMode.value = 'mapping'
-        kiroModelMappings.value = []
       }
     } else {
       resetForm()
@@ -5761,9 +6153,8 @@ watch(
       form.type = category === 'oauth-based' ? 'oauth' : 'apikey'
       return
     }
-    // Adobe: Cookie 落库 oauth；中转落库 apikey。其它残留类别强制回 oauth，
-    // 避免 Anthropic 页签的 API Key 把通用 Base URL 区块串出来。
-    if (form.platform === 'adobe') {
+    // Leonardo: Cookie 落库 oauth；中转落库 apikey。
+    if (form.platform === 'leonardo') {
       form.type = category === 'apikey-relay' ? 'apikey' : 'oauth'
       return
     }
@@ -5792,7 +6183,7 @@ watch(
       upstreamBillingAutoProbeEnabled.value = true
     }
     // Reset base URL based on platform
-    if (isCNProviderPlatform(newPlatform) || newPlatform === 'opencode_go') {
+    if (isMultiProtocolApiKeyPlatform(newPlatform)) {
       const mode = newPlatform === 'opencode_go' ? openCodeAccountMode.value : accountMode.value
       apiKeyBaseUrl.value = defaultCNBaseUrl(newPlatform, mode, apiProtocol.value)
     } else {
@@ -5801,16 +6192,26 @@ watch(
           ? 'https://api.openai.com'
           : newPlatform === 'gemini'
             ? 'https://generativelanguage.googleapis.com'
-            : newPlatform === 'kiro' || newPlatform === 'adobe'
+            : newPlatform === 'kiro'
               ? ''
               : newPlatform === 'grok'
                 ? 'https://api.x.ai/v1'
-                : 'https://api.anthropic.com'
+                : newPlatform === 'typesafe'
+                  ? 'https://api.typesafe.ai'
+                  : newPlatform === 'leonardo'
+                    ? ''
+                    : 'https://api.anthropic.com'
     }
     // Clear model-related settings
     allowedModels.value = []
     upstreamModelsPreviewed.value = false
     modelMappings.value = []
+    if (newPlatform === 'typesafe') {
+      accountCategory.value = 'apikey'
+      // Grok 等平台会把模式切到映射；TypeSafe 只用白名单写入 jev-latest。
+      modelRestrictionMode.value = 'whitelist'
+      allowedModels.value = ['jev-latest']
+    }
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
       antigravityModelRestrictionMode.value = 'mapping'
@@ -5821,9 +6222,8 @@ watch(
       accountCategory.value = 'oauth-based'
       antigravityAccountType.value = 'oauth'
     } else if (newPlatform === 'kiro') {
-      fetchKiroDefaultMappings().then(mappings => {
-        kiroModelMappings.value = [...mappings]
-      })
+      modelRestrictionMode.value = 'whitelist'
+      kiroUpstreamIDs.value = {}
       accountCategory.value = 'oauth-based'
       kiroAccountType.value = 'oauth'
       kiroOAuthProvider.value = 'google'
@@ -5836,16 +6236,6 @@ watch(
       antigravityWhitelistModels.value = []
       antigravityModelMappings.value = []
       antigravityModelRestrictionMode.value = 'mapping'
-      kiroModelMappings.value = []
-    }
-    // Adobe 走上面的通用 else 分支（它顺带清掉了 antigravity/kiro 的残留），这里只补默认值。
-    // 中转 Base URL 必须留空：不能落到 anthropic.com，也不预填官方 OpenAI。
-    if (newPlatform === 'adobe') {
-      apiKeyBaseUrl.value = ''
-      if (accountCategory.value !== 'oauth-based' && accountCategory.value !== 'apikey-relay') {
-        accountCategory.value = 'oauth-based'
-      }
-      applyAdobeModelRestrictionDefaults()
     }
     if (newPlatform === 'grok') {
       accountCategory.value = 'oauth-based'
@@ -5853,6 +6243,15 @@ watch(
       modelRestrictionMode.value = 'mapping'
       form.concurrency = 1
       form.load_factor = null
+    }
+    // Leonardo 默认 Cookie 原生模式；模型限制用白名单模式且默认空白名单
+    //（不下发 model_mapping = 后端回落默认映射，历史别名都还在）。
+    if (newPlatform === 'leonardo') {
+      apiKeyValue.value = ''
+      if (accountCategory.value !== 'oauth-based' && accountCategory.value !== 'apikey-relay') {
+        accountCategory.value = 'oauth-based'
+      }
+      modelRestrictionMode.value = 'whitelist'
     }
     if (newPlatform !== 'gemini' && newPlatform !== 'anthropic' && accountCategory.value === 'service_account') {
       accountCategory.value = 'oauth-based'
@@ -5872,6 +6271,8 @@ watch(
     vertexProjectId.value = ''
     vertexClientEmail.value = ''
     vertexLocation.value = 'global'
+    vertexAuthMode.value = 'service_account'
+    vertexApiKey.value = ''
     // Reset Anthropic/Antigravity-specific settings when switching to other platforms
     if (newPlatform !== 'anthropic' && newPlatform !== 'antigravity') {
       interceptWarmupRequests.value = false
@@ -5970,11 +6371,6 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
 watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
-    // Adobe 例外：预勾全部 13 个对外名会把历史别名 gpt-image / gpt-image-1 /
-    // gpt-image-1-mini / gpt-image-2.5-prism 挡在门外——它们不在用户面清单里
-    // （Step 8 刻意的），却是老客户端还在发的名字。留空 = 不下发 model_mapping
-    // = 后端回落到 DefaultAdobeModelMapping 那 17 条，四个别名都还在。
-    if (form.platform === 'adobe') return
     if (newMode === 'whitelist') {
       allowedModels.value = [...getModelsByPlatform(form.platform)]
     }
@@ -6029,22 +6425,6 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
     return
   }
   antigravityModelMappings.value.push({ from, to })
-}
-
-const addKiroModelMapping = () => {
-  kiroModelMappings.value.push({ from: '', to: '' })
-}
-
-const removeKiroModelMapping = (index: number) => {
-  kiroModelMappings.value.splice(index, 1)
-}
-
-const addKiroPresetMapping = (from: string, to: string) => {
-  if (kiroModelMappings.value.some((m) => m.from === from)) {
-    appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
-    return
-  }
-  kiroModelMappings.value.push({ from, to })
 }
 
 // Error code warning dialog state
@@ -6123,7 +6503,8 @@ const addTempUnschedRule = (preset?: TempUnschedRuleForm) => {
     error_code: null,
     keywords: '',
     duration_minutes: 30,
-    description: ''
+    description: '',
+    scope: 'model'
   })
 }
 
@@ -6146,6 +6527,7 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
     keywords: string[]
     duration_minutes: number
     description: string
+    scope: TempUnschedulableScope
   }> = []
 
   for (const rule of rules) {
@@ -6165,7 +6547,8 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
       error_code: Math.trunc(errorCode),
       keywords,
       duration_minutes: Math.trunc(duration),
-      description: rule.description.trim()
+      description: rule.description.trim(),
+      scope: rule.scope
     })
   }
 
@@ -6328,6 +6711,9 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  leonardoCookie.value = ''
+  leonardoCreditUnitPriceUsd.value = 0
+  leonardoImageLimits.value = defaultLeonardoImageLimits()
   step.value = 1
   form.name = ''
   form.notes = ''
@@ -6351,9 +6737,6 @@ const resetForm = () => {
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
   kiroAPIRegion.value = 'us-east-1'
-  adobeCookie.value = ''
-  adobeAccessToken.value = ''
-  adobeArpSession.value = ''
   upstreamRequestIdHeader.value = ''
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
@@ -6383,12 +6766,12 @@ const resetForm = () => {
   kiroDeviceRegistrationJson.value = ''
   kiroImportProvider.value = 'Google'
   kiroCreditUnitPriceUsd.value = 0
-  fetchKiroDefaultMappings().then(mappings => {
-    kiroModelMappings.value = [...mappings]
-  })
+  kiroUpstreamIDs.value = {}
   poolModeEnabled.value = false
   poolModeRetryCount.value = DEFAULT_POOL_MODE_RETRY_COUNT
   poolModeRetryStatusCodesInput.value = ''
+  explicitCacheUpstreamEnabled.value = false
+  explicitCacheUpstreamMaxTTL.value = ''
   customErrorCodesEnabled.value = false
   selectedErrorCodes.value = []
   customErrorCodeInput.value = null
@@ -6443,6 +6826,8 @@ const resetForm = () => {
   vertexProjectId.value = ''
   vertexClientEmail.value = ''
   vertexLocation.value = 'global'
+  vertexAuthMode.value = 'service_account'
+  vertexApiKey.value = ''
   tempUnschedEnabled.value = false
   tempUnschedRules.value = []
   geminiOAuthType.value = 'code_assist'
@@ -6678,8 +7063,10 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
-  // For OAuth-based type, handle OAuth flow (goes to step 2)
-  if (isOAuthFlow.value || (form.platform === 'adobe' && accountCategory.value !== 'apikey-relay')) {
+  // 两步建号（OAuth 授权，以及 Leonardo Cookie 粘贴）：第一步只校验名称后进入第二步。
+  // 必须与模板里「下一步」按钮的 needsCredentialStep 同口径，否则 Leonardo Cookie 号
+  // 会落到下面的通用 API Key 分支。
+  if (needsCredentialStep.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
@@ -6691,6 +7078,38 @@ const handleSubmit = async () => {
       return
     }
     step.value = 2
+    return
+  }
+
+  // Leonardo 外部中转(API Key + Base URL)：存为 type=apikey，带 base_url → OpenAI 出图转发。
+  if (form.platform === 'leonardo' && accountCategory.value === 'apikey-relay') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!apiKeyBaseUrl.value.trim()) {
+      appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+      return
+    }
+    if (!apiKeyValue.value.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      api_key: apiKeyValue.value.trim(),
+      base_url: apiKeyBaseUrl.value.trim()
+    }
+    const modelMapping = buildModelMappingObject(
+      modelRestrictionMode.value,
+      allowedModels.value,
+      modelMappings.value
+    )
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+
+    await createAccountAndFinish('leonardo', 'apikey', credentials)
     return
   }
 
@@ -6799,6 +7218,28 @@ const handleSubmit = async () => {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
+    if (vertexUsesApiKey.value) {
+      if (!vertexApiKey.value.trim()) {
+        appStore.showError(t('admin.accounts.vertexApiKeyRequired'))
+        return
+      }
+      const projectId = vertexProjectId.value.trim()
+      if (projectId && !vertexLocation.value.trim()) {
+        appStore.showError(t('admin.accounts.vertexLocationRequired'))
+        return
+      }
+      const credentials: Record<string, unknown> = {
+        auth_mode: 'apikey',
+        api_key: vertexApiKey.value.trim(),
+        location: vertexLocation.value.trim() || 'global',
+        tier_id: 'vertex'
+      }
+      if (projectId) {
+        credentials.project_id = projectId
+      }
+      await createAccountAndFinish(form.platform, 'service_account' as AccountType, credentials)
+      return
+    }
     if (!parseVertexServiceAccountJson()) {
       return
     }
@@ -6835,7 +7276,7 @@ const handleSubmit = async () => {
       api_region: kiroAPIRegion.value.trim() || 'us-east-1'
     }
 
-    const modelMapping = buildModelMappingObject('mapping', [], kiroModelMappings.value)
+    const modelMapping = buildCreateKiroMapping(true)
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     }
@@ -6874,7 +7315,7 @@ const handleSubmit = async () => {
       base_url: apiKeyBaseUrl.value.trim()
     }
 
-    const modelMapping = buildModelMappingObject('mapping', [], kiroModelMappings.value)
+    const modelMapping = buildCreateKiroMapping(false)
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     }
@@ -6893,39 +7334,6 @@ const handleSubmit = async () => {
     return
   }
 
-  // Adobe 外部中转(API Key + Base URL):存为 type=apikey,带 base_url → OpenAI 出图转发
-  if (form.platform === 'adobe' && accountCategory.value === 'apikey-relay') {
-    if (!form.name.trim()) {
-      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
-      return
-    }
-    if (!apiKeyBaseUrl.value.trim()) {
-      appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
-      return
-    }
-    if (!apiKeyValue.value.trim()) {
-      appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
-      return
-    }
-
-    const credentials: Record<string, unknown> = {
-      api_key: apiKeyValue.value.trim(),
-      base_url: apiKeyBaseUrl.value.trim()
-    }
-
-    const modelMapping = buildModelMappingObject(
-      modelRestrictionMode.value,
-      allowedModels.value,
-      modelMappings.value
-    )
-    if (modelMapping) {
-      credentials.model_mapping = modelMapping
-    }
-
-    await createAccountAndFinish('adobe', 'apikey', credentials)
-    return
-  }
-
   // For apikey type, create directly
   if (!apiKeyValue.value.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
@@ -6940,6 +7348,8 @@ const handleSubmit = async () => {
         ? 'https://generativelanguage.googleapis.com'
         : form.platform === 'grok'
           ? 'https://api.x.ai/v1'
+          : form.platform === 'typesafe'
+            ? 'https://api.typesafe.ai'
           : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
@@ -6947,14 +7357,14 @@ const handleSubmit = async () => {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
   }
-  if (form.platform === 'gemini') {
+  if (form.platform === 'gemini' && isOfficialGeminiBaseUrl(apiKeyBaseUrl.value)) {
     credentials.tier_id = geminiTierAIStudio.value
   }
 
   // 国产供应商：账号模式 + 协议 + 对应端点写入凭据；后端按 account_mode 路由
   // 额度/余额探测，按 api_protocol 路由转发端点与格式。注意 CN apikey 走本函数
   // 的通用路径（直接 doCreateAccount），不经过 createAccountAndFinish。
-  if (isCNProviderPlatform(form.platform) || form.platform === 'opencode_go') {
+  if (isMultiProtocolApiKeyPlatform(form.platform)) {
     credentials.account_mode = form.platform === 'opencode_go' ? openCodeAccountMode.value : accountMode.value
     credentials.api_protocol = apiProtocol.value
     if (apiProtocol.value === 'adaptive') {
@@ -6980,7 +7390,7 @@ const handleSubmit = async () => {
       if (zhipuOrganization.value.trim()) credentials.zhipu_organization = zhipuOrganization.value.trim()
       if (zhipuProject.value.trim()) credentials.zhipu_project = zhipuProject.value.trim()
     }
-    if (form.platform === 'opencode_go') {
+    if (providerRoutesByModel(form.platform)) {
       applyOpenCodeGoProtocolRules(credentials, openCodeGoProtocolRules.value, 'create')
     }
   }
@@ -7009,6 +7419,12 @@ const handleSubmit = async () => {
       credentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
     }
   }
+
+  applyExplicitCacheUpstreamCredentials(
+    credentials,
+    form.platform === 'gemini' && !isOfficialGeminiBaseUrl(apiKeyBaseUrl.value) && explicitCacheUpstreamEnabled.value,
+    explicitCacheUpstreamMaxTTL.value
+  )
 
   // Add custom error codes if enabled
   if (customErrorCodesEnabled.value) {
@@ -7043,46 +7459,6 @@ const handleSubmit = async () => {
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
-}
-
-const handleAdobeCreate = async () => {
-  if (!form.name.trim()) {
-    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
-    return
-  }
-  const cookie = extractAdobeCookieInput(adobeCookie.value)
-  if (!cookie) {
-    appStore.showError(t('admin.accounts.adobe.cookieRequired'))
-    return
-  }
-
-  const credentials: Record<string, unknown> = {
-    cookie
-  }
-  // 留空时由后台刷新器首次用 cookie 换取，不写入空串以免被当成"已有 token"。
-  const token = extractAdobeAccessTokenInput(adobeAccessToken.value)
-    || extractAdobeAccessTokenFromCookieInput(adobeCookie.value)
-  if (token) {
-    credentials.access_token = token
-  }
-  const arp = extractAdobeArpSessionInput(adobeArpSession.value)
-    || extractAdobeArpFromCookieInput(adobeCookie.value)
-  if (arp) {
-    credentials.arp_session_id = arp
-  }
-
-  // 白名单为空且没有映射行 => 不下发 model_mapping，由后端回落到
-  // DefaultAdobeModelMapping（17 条，含 4 个历史别名）。
-  const modelMapping = buildModelMappingObject(
-    modelRestrictionMode.value,
-    allowedModels.value,
-    modelMappings.value
-  )
-  if (modelMapping) {
-    credentials.model_mapping = modelMapping
-  }
-
-  await createAccountAndFinish('adobe', 'oauth' as AccountType, credentials)
 }
 
 const goBackToBasicInfo = () => {
@@ -7212,6 +7588,12 @@ const createAccountAndFinish = async (
     const unitPrice = Number(kiroCreditUnitPriceUsd.value ?? 0)
     kiroExtra.kiro_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
     finalExtra = kiroExtra
+  }
+  if (platform === 'leonardo' && type === 'oauth') {
+    const leonardoExtra: Record<string, unknown> = { ...(finalExtra || {}) }
+    const unitPrice = Number(leonardoCreditUnitPriceUsd.value ?? 0)
+    leonardoExtra.leonardo_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
+    finalExtra = applyLeonardoImageLimitsToExtra(leonardoExtra, leonardoImageLimits.value)
   }
   if (platform === 'grok') {
     if (!credentials.base_url) {
@@ -8218,7 +8600,7 @@ const handleAntigravityExchange = async (authCode: string) => {
 
 const buildKiroCredentials = (tokenInfo: Parameters<typeof kiroOAuth.buildCredentials>[0]) => {
   const credentials = kiroOAuth.buildCredentials(tokenInfo)
-  const modelMapping = buildModelMappingObject('mapping', [], kiroModelMappings.value)
+  const modelMapping = buildCreateKiroMapping(true)
   if (modelMapping) {
     credentials.model_mapping = modelMapping
   }

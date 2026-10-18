@@ -97,6 +97,47 @@ func TestOpenAIGatewayServiceRecordUsage_PersistsKiroCredits(t *testing.T) {
 	require.InDelta(t, 0.17, *usageRepo.lastLog.KiroCredits, 0.000001)
 }
 
+// Leonardo Cookie 号的实扣积分写进同一列（今日统计按账号积分单价估算成本）；
+// 中转号走 OpenAI 兼容上游，没有 Leonardo 积分，不写。
+func TestOpenAIGatewayServiceRecordUsage_PersistsLeonardoCredits(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		accountType string
+		wantCredits bool
+	}{
+		{"cookie", AccountTypeOAuth, true},
+		{"relay", AccountTypeAPIKey, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{
+					RequestID:  "leonardo-image:" + tc.name,
+					Model:      "gpt-image-2",
+					ImageCount: 1,
+					ImageSize:  "1K",
+					Usage:      OpenAIUsage{InputTokens: 5, OutputTokens: 272, ImageOutputTokens: 272, KiroCredits: 8},
+					Duration:   time.Second,
+				},
+				APIKey:  &APIKey{ID: 10},
+				User:    &User{ID: 20},
+				Account: &Account{ID: 31, Platform: PlatformLeonardo, Type: tc.accountType},
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+			if !tc.wantCredits {
+				require.Nil(t, usageRepo.lastLog.KiroCredits)
+				return
+			}
+			require.NotNil(t, usageRepo.lastLog.KiroCredits)
+			require.InDelta(t, 8, *usageRepo.lastLog.KiroCredits, 0.000001)
+		})
+	}
+}
+
 func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
@@ -3309,6 +3350,51 @@ func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testin
 	standardTotal := float64(tokens.InputTokens)*inputPrice + float64(tokens.OutputTokens)*outputPrice
 	require.InDelta(t, standardTotal*fastMultiplier, usageRepo.lastLog.TotalCost, 1e-10)
 	require.InDelta(t, standardTotal*0.5, usageRepo.lastLog.ActualCost, 1e-10)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastMissingPricingRecordsZeroCostUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(
+		usageRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	svc.resolver = NewModelPricingResolver(nil, svc.billingService)
+	groupID := int64(78)
+	serviceTier := "priority"
+	apiKey := &APIKey{
+		ID:      1021,
+		GroupID: &groupID,
+		Group: &Group{
+			ID: groupID, Platform: PlatformOpenAI, Status: StatusActive,
+			Hydrated: true, RateMultiplier: 1, FreeOpenAIFast: true,
+		},
+	}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:   "resp_free_fast_missing_pricing",
+			ServiceTier: &serviceTier,
+			Usage:       OpenAIUsage{InputTokens: 1200, OutputTokens: 300},
+			Model:       "pricing-missing-test-model",
+			Duration:    time.Second,
+		},
+		APIKey:  apiKey,
+		User:    &User{ID: 2021},
+		Account: &Account{ID: 3021, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, usageRepo.calls)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, "resp_free_fast_missing_pricing", usageRepo.lastLog.RequestID)
+	require.Equal(t, 1200, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 300, usageRepo.lastLog.OutputTokens)
+	require.NotNil(t, usageRepo.lastLog.ServiceTier)
+	require.Equal(t, "priority", *usageRepo.lastLog.ServiceTier)
+	require.Zero(t, usageRepo.lastLog.TotalCost)
+	require.Zero(t, usageRepo.lastLog.ActualCost)
 }
 
 func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIAccount(t *testing.T) {

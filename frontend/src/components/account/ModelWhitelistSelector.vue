@@ -154,17 +154,22 @@ import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import { useClipboard } from '@/composables/useClipboard'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
+import { allModels, getModelsByPlatform, kiroUpstreamIDsFromMetadata } from '@/composables/useModelWhitelist'
+import { supportsUpstreamModelSync } from '@/constants/platformCatalog'
+import { extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   modelValue: string[]
+  modelMappings?: { from: string; to: string }[]
   platform?: string
   platforms?: string[]
   availableModels?: string[]
   showSyncActions?: boolean
   accountId?: number
+  accountType?: string
+  allowUpstreamSync?: boolean
   syncCredentials?: {
     platform: string
     type: string
@@ -172,11 +177,13 @@ const props = withDefaults(defineProps<{
     api_key: string
   }
 }>(), {
-  showSyncActions: true
+  showSyncActions: true,
+  allowUpstreamSync: true
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
+  'update:kiroUpstreamIDs': [value: Record<string, string>]
   'upstream-synced': []
 }>()
 
@@ -188,6 +195,7 @@ const searchQuery = ref('')
 const customModel = ref('')
 const isComposing = ref(false)
 const isSyncingUpstream = ref(false)
+const kiroUpstreamIDs = ref<Record<string, string>>({})
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
     props.platforms && props.platforms.length > 0
@@ -205,26 +213,21 @@ const normalizedPlatforms = computed(() => {
   )
 })
 
-const upstreamSyncPlatforms = new Set([
-  'anthropic',
-  'openai',
-  'gemini',
-  'antigravity',
-  'grok',
-  'kimi',
-  'zhipu',
-  'deepseek',
-  'minimax',
-  'opencode_go',
-  'codebuddy'
-])
+// 清单驱动的通用判断（多协议供应商 + anthropic/openai/gemini/antigravity/grok），
+// 再加上 fork 定制的 kiro（relay）与 CodeBuddy 上游模型同步。
+const isUpstreamSyncable = (platform: string) => {
+  const normalized = platform.toLowerCase()
+  if (supportsUpstreamModelSync(normalized)) return true
+  return normalized === 'kiro' || normalized === 'codebuddy'
+}
 const canSyncUpstream = computed(() => {
+  if (!props.allowUpstreamSync) return false
   if (props.accountId) {
     if (normalizedPlatforms.value.length === 0) return true
-    return normalizedPlatforms.value.some(platform => upstreamSyncPlatforms.has(platform.toLowerCase()))
+    return normalizedPlatforms.value.some(platform => isUpstreamSyncable(platform))
   }
   if (props.syncCredentials) {
-    return upstreamSyncPlatforms.has(props.syncCredentials.platform.toLowerCase())
+    return isUpstreamSyncable(props.syncCredentials.platform)
   }
   return false
 })
@@ -287,6 +290,11 @@ const addCustom = () => {
     appStore.showInfo(t('admin.accounts.modelExists'))
     return
   }
+  const conflict = props.modelMappings?.find(mapping => mapping.from.trim() === model && mapping.to.trim() && mapping.to.trim() !== model)
+  if (conflict) {
+    appStore.showInfo(t('admin.accounts.modelMappingConflict', { from: model, to: conflict.to.trim() }))
+    return
+  }
   emit('update:modelValue', [...props.modelValue, model])
   customModel.value = ''
 }
@@ -308,8 +316,7 @@ const fillRelated = () => {
 }
 
 const syncUpstreamModels = async () => {
-  if (isSyncingUpstream.value) return
-  if (!props.accountId && !props.syncCredentials) return
+  if (isSyncingUpstream.value || !canSyncUpstream.value) return
 
   isSyncingUpstream.value = true
   try {
@@ -323,6 +330,11 @@ const syncUpstreamModels = async () => {
     }
 
     const upstreamModels = result.models.map(model => model.trim()).filter(Boolean)
+    const incomingIDs = kiroUpstreamIDsFromMetadata(result.metadata)
+    if (Object.keys(incomingIDs).length > 0) {
+      kiroUpstreamIDs.value = { ...kiroUpstreamIDs.value, ...incomingIDs }
+      emit('update:kiroUpstreamIDs', kiroUpstreamIDs.value)
+    }
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
       return
@@ -362,7 +374,7 @@ const syncUpstreamModels = async () => {
       appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+    const message = extractApiErrorMessage(error, t('admin.accounts.syncUpstreamModelsFailed'))
     appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingUpstream.value = false

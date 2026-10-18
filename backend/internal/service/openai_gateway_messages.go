@@ -36,9 +36,28 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 遥测回合收尾：覆盖 Grok strip 重试循环与三处尾递归重入。尾递归时内层
 	// frame 先收尾，而内层的返回值就是本回合的最终结果，外层随后是 no-op。
 	defer finishCodexTelemetryTurn(c)
+	// 工具 Schema 清洗必须先于所有分流：下游每条路径（原生 Anthropic 直通、
+	// Chat Completions 转换、Responses 转换）都会把 tools 原样带给上游，而
+	// xAI / Moonshot 等严格校验方会因 input_schema 里的 required:null 或
+	// type:null 直接 400。
+	if sanitized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); err != nil {
+		return nil, err
+	} else if changed {
+		body = sanitized
+	}
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	// Web Search 模拟：Chat Completions 转换会丢掉 web_search 工具，纯 web_search
+	// 请求在此直接调用搜索 API 构造 Anthropic 响应，不访问上游。
+	if groupID := getOpenAIGroupIDFromContext(c); shouldEmulateWebSearchFor(ctx, s.settingService, s.channelService, account, &groupID, body) {
+		stream := gjson.GetBytes(body, "stream").Bool()
+		res, err := writeEmulatedWebSearch(ctx, c, account, body, gjson.GetBytes(body, "model").String(), stream)
+		if err != nil {
+			return nil, err
+		}
+		return &OpenAIForwardResult{Model: res.Model, Stream: stream, Duration: res.Duration}, nil
+	}
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
@@ -47,34 +66,27 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, err
 	}
 
-	// OpenCode Go：按模型原生协议分流。规则未命中兜底 Chat Completions。
-	if account.IsOpenCodeGo() {
-		mapped := resolveOpenCodeGoMappedModel(account, body, defaultMappedModel)
-		switch openCodeGoNativeProtocol(account, mapped) {
-		case APIProtocolAnthropic:
-			return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
-		case APIProtocolResponses:
-			break
-		default:
-			return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
-		}
-	} else if account.IsAnthropicProtocol() || account.IsAdaptiveAPIProtocol() {
-		// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
-		// /v1/messages 请求零转换直通（仅模型名映射 + 少量 body 清洗），完整保留
-		// thinking / tool_use / cache 语义，适配 Claude Code 等原生客户端。
-		// 必须先于 ShouldUseResponsesAPI 分流：Anthropic 协议账号经 probe 落标
-		// openai_responses_supported=false，会先命中下方的 CC 直转分支。
-		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
+	// 上游协议统一由 resolveUpstreamProtocol 判定（按模型分流时带上游模型目录）。Anthropic 分流必须先于
+	// ShouldUseResponsesAPI：Anthropic 协议账号经 probe 落标
+	// openai_responses_supported=false，否则会命中 CC 直转。
+	routingModel := upstreamRoutingModel(account, body, defaultMappedModel)
+	if account.IsOpenCodeGo() && IsOpenCodeUnsupportedModel(routingModel) {
+		return nil, writeOpenCodeUnsupportedModelError(c, true, routingModel)
 	}
 
 	// 入口分流：CodeBuddy 上游仅支持 OpenAI Chat Completions 协议（/v2/chat/completions），
-	// 不支持 Responses/Claude，直接走 Anthropic→ChatCompletions 直转。
+	// 且为 OAuth 账号，不会命中面向 API Key 的通用探测，故在统一协议分流前直转。
 	if account.Platform == PlatformCodeBuddy {
 		return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
-	// 固定 chat_completions 的 CN 账号，以及不支持 Responses 的其他 APIKey
-	// 账号，均将 Messages 转为 CC；固定 responses 的 CN 账号不受探针旧值覆盖。
-	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+	switch s.resolveUpstreamProtocolFor(ctx, account, APIProtocolAnthropic, routingModel) {
+	case APIProtocolAnthropic:
+		// 上游为供应商原生 Anthropic 端点：/v1/messages 零转换直通（仅模型名映射 +
+		// 少量 body 清洗），完整保留 thinking / tool_use / cache 语义。
+		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
+	case APIProtocolChatCompletions:
+		// 固定 chat_completions 的多协议账号、规则命中 CC 的按模型分流账号，以及
+		// 不支持 Responses 的其他 APIKey 账号，均将 Messages 转为 CC。
 		return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
@@ -95,6 +107,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 2. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	anthropicDigestChain := ""
@@ -146,7 +162,8 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// 3. Convert Anthropic → Responses after compatibility-only replay guard.
-	responsesReq, err := apicompat.AnthropicToResponses(&anthropicReq)
+	anthropicReq.Model = upstreamModel
+	responsesReq, err := anthropicToResponses(s.cfg, &anthropicReq)
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}

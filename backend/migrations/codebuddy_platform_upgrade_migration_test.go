@@ -55,7 +55,7 @@ func TestCodeBuddyPlatformUpgradeChecksNeverNarrowAcceptedPlatforms(t *testing.T
 				}
 				last = name
 			}
-			require.Equal(t, "240_codebuddy_platform_constraints_superset.sql", last)
+			require.Equal(t, "241_add_typesafe_platform.sql", last)
 		})
 	}
 }

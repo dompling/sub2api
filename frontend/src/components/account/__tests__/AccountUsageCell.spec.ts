@@ -89,11 +89,35 @@ function makeOllamaUsage(accountId: number, overrides: Partial<NonNullable<Accou
   }
 }
 
-// CN 平台 Ollama Cloud 用例共用的子组件 stub：按 data-test 断言渲染与否
+function makeOpenCodeGoUsage(accountId: number, overrides: Partial<NonNullable<Account['opencode_go_usage']>> = {}) {
+  return {
+    account_id: accountId,
+    eligible: true,
+    auto_refresh_enabled: true,
+    snapshot: {
+      status: 'ok' as const,
+      fetched_at: '2026-07-22T12:00:00Z',
+      last_attempt_at: '2026-07-22T12:00:00Z',
+      next_refresh_at: '2026-07-22T13:00:00Z',
+      data: {
+        rolling: { percent: 5.6, resets_at: '2026-07-23T03:00:00Z' },
+        weekly: { percent: 14.2, resets_at: '2026-07-29T00:00:00Z' },
+        monthly: { percent: 33.3, resets_at: '2026-08-01T00:00:00Z' }
+      }
+    },
+    ...overrides,
+  }
+}
+
+// CN 平台 Ollama Cloud / OpenCode Go 用例共用的子组件 stub：按 data-test 断言渲染与否
 const cnUsageCellStubs = {
   OllamaCloudUsageCell: {
     props: ['account'],
     template: '<div data-test="embedded-ollama">ollama</div>'
+  },
+  OpenCodeGoUsageCell: {
+    props: ['account'],
+    template: '<div data-test="opencode-go-cell" />'
   },
   CNProviderQuotaCell: {
     template: '<div data-test="cn-quota-cell" />'
@@ -136,25 +160,6 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('25%')
     expect(wrapper.text()).toContain('admin.accounts.usageWindow.codebuddy.accountCount: 2')
     expect(wrapper.find('div[style="width: 25%;"]').exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('admin.accounts.usageWindow.adobeCredits')
-    wrapper.unmount()
-  })
-
-  it('keeps the upstream Adobe credits branch alongside CodeBuddy', async () => {
-    getUsage.mockResolvedValue({
-      adobe_plan_cap: 'Creative Cloud',
-      adobe_credit: { current_usage: 20, usage_limit: 100, percentage_used: 20 }
-    })
-    const wrapper = mount(AccountUsageCell, {
-      props: { account: makeAccount({ id: 9802, platform: 'adobe' }) },
-      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
-    })
-    await flushPromises()
-
-    expect(getUsage).toHaveBeenCalledWith(9802, 'passive', false)
-    expect(wrapper.text()).toContain('Creative Cloud')
-    expect(wrapper.text()).toContain('admin.accounts.usageWindow.adobeCredits')
-    expect(wrapper.text()).not.toContain('admin.accounts.usageWindow.codebuddy')
     wrapper.unmount()
   })
 
@@ -349,6 +354,149 @@ describe('AccountUsageCell', () => {
     expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="embedded-ollama"]').exists()).toBe(false)
+  })
+
+  it.each(['opencode_go', 'kimi', 'zhipu', 'deepseek', 'minimax'] as const)(
+    '%s 平台 OpenCode Go eligible 时只渲染 OpenCode 用量单元格并跳过 CN 子单元格',
+    async (platform) => {
+      const wrapper = mount(AccountUsageCell, {
+        props: {
+          account: makeAccount({
+            id: 9100,
+            platform,
+            type: 'apikey',
+            credentials: { account_mode: platform === 'opencode_go' ? 'go' : 'coding' },
+            opencode_go_usage: makeOpenCodeGoUsage(9100)
+          })
+        },
+        global: {
+          stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+        }
+      })
+
+      await flushPromises()
+
+      // 同一账号只渲染一次 OpenCode 用量单元格
+      expect(wrapper.findAll('[data-test="opencode-go-cell"]')).toHaveLength(1)
+      expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="embedded-ollama"]').exists()).toBe(false)
+      expect(wrapper.find('div[title="admin.accounts.cnProviders.noBalanceEndpoint"]').exists()).toBe(false)
+      expect(getUsage).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { name: 'opencode_go（go 模式）', platform: 'opencode_go' as const, mode: 'go' },
+    { name: 'kimi（coding 模式）', platform: 'kimi' as const, mode: 'coding' }
+  ])('OpenCode Go 不合格时（$name）仍渲染 CN 子单元格', async ({ platform, mode }) => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9101,
+          platform,
+          type: 'apikey',
+          credentials: { account_mode: mode },
+          opencode_go_usage: makeOpenCodeGoUsage(9101, { eligible: false })
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-test="opencode-go-cell"]')).toHaveLength(0)
+  })
+
+  it('openai apikey 挂载 OpenCode Go 时在非 CN 分支渲染一次且不渲染占位符', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9102,
+          platform: 'openai',
+          type: 'apikey',
+          opencode_go_usage: makeOpenCodeGoUsage(9102)
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-test="opencode-go-cell"]')).toHaveLength(1)
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(false)
+    // 用量单元格已渲染时不再叠加 `-` 占位符
+    expect(wrapper.text()).not.toContain('-')
+  })
+
+  it('Command Code 账号渲染额度与积分余额单元格', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9103,
+          platform: 'command_code',
+          type: 'apikey',
+          credentials: { api_key: 'user_test_key', account_mode: 'payg' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('-')
+  })
+
+  it('自定义中转的 Command Code 账号没有可查的用量接口，显示占位符', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9105,
+          platform: 'command_code',
+          type: 'apikey',
+          credentials: { api_key: 'user_test_key', account_mode: 'payg', base_url: 'https://relay.example.com/v1' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('div[title="admin.accounts.cnProviders.noBalanceEndpoint"]').exists()).toBe(true)
+  })
+
+  it('Cline 账号渲染 ClinePass 窗口与积分余额单元格', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9104,
+          platform: 'cline',
+          type: 'apikey',
+          credentials: { api_key: 'sk-cline' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(true)
+    // 子单元格可见时不显示 `-` 占位符（按量账号与订阅账号用同一套单元格）。
+    expect(wrapper.text()).not.toContain('-')
   })
 
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
@@ -1800,6 +1948,101 @@ describe('AccountUsageCell', () => {
 		expect(wrapper.text()).toContain('0')
 		expect(wrapper.text()).toContain('A $0.00')
 		expect(wrapper.text()).toContain('U $0.00')
+		expect(wrapper.text()).toContain('vertex')
+		expect(wrapper.text()).not.toContain('admin.accounts.gemini.quotaPolicy.title')
+		expect(wrapper.text()).not.toContain('admin.accounts.gemini.rateLimit.unlimited')
+		expect(getUsage).not.toHaveBeenCalled()
+  })
+
+  it('Gemini 第三方上游 API Key 按普通 Key 账号展示今日统计与额度，不显示 Gemini 徽章', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4002,
+          platform: 'gemini',
+          type: 'apikey',
+          credentials: {
+            base_url: 'https://relay.example.com/gemini',
+            api_key: 'sk-relay',
+            tier_id: 'aistudio_free'
+          },
+          extra: {},
+          quota_daily_limit: 10,
+          quota_daily_used: 2.5
+        }),
+        todayStats: {
+          requests: 123,
+          tokens: 2300000,
+          cost: 1.79,
+          standard_cost: 1.79,
+          user_cost: 0
+        }
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).not.toContain('api key')
+    expect(text).not.toContain('ai studio')
+    expect(text).not.toContain('free')
+    expect(text).not.toContain('relay.example.com')
+    expect(wrapper.find('account-quota-info-stub').exists()).toBe(false)
+    expect(text).toContain('123 req')
+    expect(text).toContain('A $1.79')
+    expect(text).toContain('U $0.00')
+    const bars = wrapper.findAll('usage-progress-bar-stub')
+    expect(bars.map((bar) => bar.attributes('label'))).toEqual(['1d'])
+    expect(text).not.toContain('admin.accounts.gemini.quotaPolicy.title')
+    expect(text).not.toContain('admin.accounts.gemini.quotaPolicy.simulatedNote')
+    expect(text).not.toContain('admin.accounts.gemini.rateLimit.unlimited')
+    expect(getUsage).not.toHaveBeenCalled()
+  })
+
+  it('Gemini 官方 API Key 保留 AI Studio 等级与模拟配额', async () => {
+    getUsage.mockResolvedValue({
+      gemini_pro_daily: {
+        utilization: 20,
+        resets_at: '2026-10-11T07:00:00Z',
+        remaining_seconds: 3600
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4003,
+          platform: 'gemini',
+          type: 'apikey',
+          credentials: {
+            base_url: 'https://generativelanguage.googleapis.com',
+            api_key: 'AIza-official',
+            tier_id: 'aistudio_paid'
+          },
+          extra: {}
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('ai studio paid')
+    expect(text).toContain('admin.accounts.gemini.quotaPolicy.title')
+    expect(text).toContain('admin.accounts.gemini.quotaPolicy.simulatedNote')
+    expect(getUsage).toHaveBeenCalledWith(4003)
   })
 
   it('Anthropic OAuth 会渲染 7d F (Fable) 进度条，且 7d S 逻辑保留', async () => {
@@ -1896,5 +2139,99 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('7d|56')
     expect(wrapper.text()).not.toContain('7d S')
     expect(wrapper.text()).not.toContain('7d F')
+  })
+})
+
+describe('AccountUsageCell Leonardo', () => {
+  beforeEach(() => {
+    getUsage.mockReset()
+  })
+
+  const mountLeonardo = (id: number) =>
+    mount(AccountUsageCell, {
+      props: { account: makeAccount({ id, platform: 'leonardo', type: 'oauth', extra: {}, credentials: {} }) },
+      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+
+  it('Leonardo Cookie 号按池展示 Fast / Rollover 进度条与 Top-up', async () => {
+    getUsage.mockResolvedValue({
+      source: 'passive',
+      leonardo_plan: 'STANDARD',
+      leonardo_plan_name: 'Premium',
+      leonardo_token_renewal: '2026-11-13T09:51:37.672',
+      leonardo_credits: {
+        total: 24992, usable: 24992, subscription: 24992, paid: 0, rollover: 0,
+        fast_limit: 25000, rollover_limit: 75000
+      },
+    })
+
+    const wrapper = mountLeonardo(4001)
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(4001, 'passive', false)
+    expect(wrapper.text()).toContain('Premium')
+    const fast = wrapper.get('[data-testid="leonardo-fast"]')
+    expect(fast.text()).toContain('admin.accounts.usageWindow.leonardoFast')
+    expect(fast.text()).toContain(`${(24992).toLocaleString()} / ${(25000).toLocaleString()}`)
+    expect(fast.find('.bg-emerald-500').exists()).toBe(true)
+    const rollover = wrapper.get('[data-testid="leonardo-rollover"]')
+    expect(rollover.text()).toContain(`0 / ${(75000).toLocaleString()}`)
+    expect(wrapper.get('[data-testid="leonardo-topup"]').text()).toContain('admin.accounts.usageWindow.leonardoTopUp')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.leonardoReset')
+  })
+
+  it('Leonardo 未知套餐只显示数字，不画进度条', async () => {
+    getUsage.mockResolvedValue({
+      source: 'passive',
+      leonardo_plan: 'ENTERPRISE',
+      leonardo_credits: { total: 1200, usable: 1200, subscription: 1000, paid: 0, rollover: 200, fast_limit: 0, rollover_limit: 0 },
+    })
+
+    const wrapper = mountLeonardo(4003)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ENTERPRISE')
+    const fast = wrapper.get('[data-testid="leonardo-fast"]')
+    expect(fast.text()).toContain((1000).toLocaleString())
+    expect(fast.text()).not.toContain('/')
+    expect(fast.find('.rounded-full.bg-gray-200').exists()).toBe(false)
+    // 有结转余额时仍显示 Rollover 行（只有数字）。
+    expect(wrapper.get('[data-testid="leonardo-rollover"]').text()).toContain('200')
+  })
+
+  it('Leonardo 免费套餐标注每日 Fast，隐藏空的 Rollover 行', async () => {
+    getUsage.mockResolvedValue({
+      source: 'passive',
+      leonardo_plan: 'FREE',
+      leonardo_plan_name: 'Free',
+      leonardo_credits: { total: 3, usable: 3, subscription: 3, paid: 0, rollover: 0, fast_limit: 150, rollover_limit: 0, fast_daily: true },
+    })
+
+    const wrapper = mountLeonardo(4004)
+    await flushPromises()
+
+    const fast = wrapper.get('[data-testid="leonardo-fast"]')
+    expect(fast.text()).toContain('admin.accounts.usageWindow.leonardoFastDaily')
+    // 剩余 2%：进度条变红。
+    expect(fast.find('.bg-red-500').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="leonardo-rollover"]').exists()).toBe(false)
+  })
+
+  it('Leonardo 中转号不查 Leonardo 用量', async () => {
+    mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4002,
+          platform: 'leonardo',
+          type: 'apikey',
+          extra: {},
+          credentials: { base_url: 'https://relay.example.com' }
+        })
+      },
+      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+
+    expect(getUsage).not.toHaveBeenCalled()
   })
 })

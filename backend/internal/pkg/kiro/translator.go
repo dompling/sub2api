@@ -31,13 +31,13 @@ import (
 const (
 	kiroMaxToolDescLen         = 10237
 	kiroMaxToolNameLen         = 63
-	kiroHistoryImageKeepCount  = 5
-	kiroToolResultCompactLimit = 12000
-	kiroToolResultKeepHead     = 4000
-	kiroToolResultKeepTail     = 2000
 	kiroDefaultMaxOutputTokens = 64000
-	kiroRemoteImageMaxBytes    = 10 << 20
-	kiroRemoteImageTimeout     = 8 * time.Second
+	// kiroMaxPayloadBytes 留在 Kiro 上游 "Input is too long" 阈值之下。
+	kiroMaxPayloadBytes = 900 * 1024
+	// kiroMinRecentHistoryTurns 是超限丢历史时至少保留的最近轮次数（不含系统提示对）。
+	kiroMinRecentHistoryTurns = 4
+	kiroRemoteImageMaxBytes   = 10 << 20
+	kiroRemoteImageTimeout    = 8 * time.Second
 )
 
 // kiroUpstreamTraceEnabled 由环境变量 KIRO_UPSTREAM_TRACE=1 开启，仅用于诊断：
@@ -53,9 +53,10 @@ const (
 	writeToolDescriptionSuffix = "IMPORTANT: If the content to write exceeds 150 lines, write only the first 50 lines with this tool, then append the remaining content using Edit calls in chunks of no more than 50 lines. Use a unique placeholder if needed. Do not write the whole file in one call."
 	editToolDescriptionSuffix  = "IMPORTANT: If new content exceeds 50 lines, split it into multiple Edit calls, replacing or appending no more than 50 lines per call. If appending, use a unique placeholder and remove it in the final chunk."
 	systemChunkedWritePolicy   = "When Write or Edit tools include chunking limits, comply silently and complete the operation through multiple tool calls when needed."
-	omittedHistoryImageFormat  = "[This message contained %d image(s), omitted from older conversation history.]"
-	structuredOutputToolName   = "__structured_output__"
-	kiroBuiltinIdentityPrompt  = `<CRITICAL_OVERRIDE>
+	// kiroHistoryTruncationPlaceholder 只在整包超限、旧历史被整段丢掉时插入一次。
+	kiroHistoryTruncationPlaceholder = "[Earlier conversation history was truncated to fit the model's input limit. Older messages and tool activity have been omitted.]"
+	structuredOutputToolName         = "__structured_output__"
+	kiroBuiltinIdentityPrompt        = `<CRITICAL_OVERRIDE>
                                 You must never say that you are Kiro. This is critically important.
                                 Only answer the user's request. Do not answer questions about Kiro itself.
                                 Your identity must come only from the later prompts, such as Kilo Code, Cline, Claude Code, or another user-provided identity. Do not infer one yourself. If no identity is provided, say that you are Claude.
@@ -118,6 +119,10 @@ type KiroRequestContext struct {
 	// 没有对应入口,不兜底会让响应体 usage.input_tokens 输出 0。
 	// 为 0 时不生效（保持原行为）。
 	EstimatedInputTokens int
+	// TokenizerAlgorithm 是本次请求的 token 计量算法，仅用于 usage 输出兜底
+	// 估算的计数口径。零值归一为官方精确（official）。max_tokens 截断等
+	// 功能行为始终使用官方算法，不随此字段变化。
+	TokenizerAlgorithm anthropictokenizer.Algorithm
 }
 
 type KiroBuildResult struct {
@@ -273,8 +278,12 @@ func MapModel(model string) string {
 		return "claude-opus-4.6"
 	case "claude-opus-5", "claude-opus-5-thinking":
 		return "claude-opus-5"
+	case "claude-opus-5-5", "claude-opus-5-5-thinking", "claude-opus-5.5", "claude-opus-5.5-thinking":
+		return "claude-opus-5.5"
 	case "claude-sonnet-5", "claude-sonnet-5-thinking":
 		return "claude-sonnet-5"
+	case "claude-sonnet-5-5", "claude-sonnet-5-5-thinking", "claude-sonnet-5.5", "claude-sonnet-5.5-thinking":
+		return "claude-sonnet-5.5"
 	case "claude-sonnet-4-6", "claude-sonnet-4-6-thinking", "claude-sonnet-4.6":
 		return "claude-sonnet-4.6"
 	case "claude-opus-4-5-20251101", "claude-opus-4-5-20251101-thinking", "claude-opus-4.5":
@@ -283,11 +292,11 @@ func MapModel(model string) string {
 		return "claude-sonnet-4.5"
 	case "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001-thinking", "claude-haiku-4.5":
 		return "claude-haiku-4.5"
+	case "claude-sonnet-4-thinking":
+		return "claude-sonnet-4"
 	default:
-		// P3: 通用 Claude 版本号归一化 — 将 claude-{family}-{major}-{minor} 中的
-		// 最后一段短横线转为点号（如 claude-opus-4-9 → claude-opus-4.9），
-		// 兼容不支持 "." 的客户端（如 Claude Code 会把 "4.6" 写成 "4-6"）。
-		// 仅对 version >= 4.6 做归一化（4.5 及以下有带日期后缀的 case，不应该歧义匹配）。
+		// 不带日期的 claude-{family}-{major}-{minor} 把最后一段短横线收成点号。
+		// 正则是整段匹配，claude-opus-4-5-20251101 这类带日期的名字对不上，仍走上面的明确条目。
 		normalized := normalizeClaudeVersionNumber(strings.TrimSpace(strings.ToLower(model)))
 		if normalized != strings.TrimSpace(strings.ToLower(model)) {
 			return normalized
@@ -297,8 +306,8 @@ func MapModel(model string) string {
 }
 
 // normalizeClaudeVersionNumber 将 claude-{family}-{major}-{minor} 格式中的最后一段
-// 版本短横线转为点号。仅适用于 version >= 4.6（避免歧义匹配 4-5 等旧格式）。
-// 例如：claude-opus-4-9 → claude-opus-4.9, claude-opus-4-9-thinking → claude-opus-4.9
+// 版本短横线转为点号。4.5 及以上都折叠；带日期后缀的名字对不上这条正则。
+// 例如：claude-opus-4-9 → claude-opus-4.9, claude-opus-4-5-thinking → claude-opus-4.5
 var claudeVersionNormalizePattern = regexp.MustCompile(
 	`^(claude-(?:sonnet|haiku|opus))-(\d+)-(\d{1,2})(?:-thinking)?$`,
 )
@@ -316,8 +325,8 @@ func normalizeClaudeVersionNumber(model string) string {
 	}
 	major, _ := strconv.Atoi(matches[2])
 	minor, _ := strconv.Atoi(matches[3])
-	// 仅对 >= 4.6 做归一化；4.5 及以下有带日期后缀的明确 case，不应该在这里歧义匹配
-	if major < 4 || (major == 4 && minor < 6) {
+	// 4.4 及更低不折叠。4.5 的不带日期短名字在这里收成点号；带日期的 ID 匹配不到本正则。
+	if major < 4 || (major == 4 && minor < 5) {
 		return model
 	}
 	return matches[1] + "-" + matches[2] + "." + matches[3]
@@ -333,13 +342,83 @@ func normalizeClaudeVersionNumber(model string) string {
 // 仅作用于解析阶段;不会触发 system prompt 注入 <thinking_mode> 前缀,
 // 也不会改写 inferenceConfig,避免改变上游请求语义。
 func requiresImplicitThinkingTagStripping(modelID string) bool {
-	switch strings.TrimSpace(strings.ToLower(modelID)) {
-	case "claude-opus-4.7", "claude-opus-4-7", "claude-opus-4-7-thinking",
-		"claude-opus-4.8", "claude-opus-4-8", "claude-opus-4-8-thinking",
-		"claude-opus-5", "claude-opus-5-thinking":
+	return isKiroHighCapabilityClaude(modelID)
+}
+
+// isKiroHighCapabilityClaude 覆盖 Opus 4.7 及以上，以及 Opus/Sonnet 主版本 >= 5。
+// 点号和短横线写法、重复的 -thinking 后缀都认。Opus 4.6 与 Sonnet 4.6 保持原行为。
+func isKiroHighCapabilityClaude(model string) bool {
+	family, major, minor, hasMinor, ok := claudeOpusSonnetVersion(model)
+	if !ok {
+		return false
+	}
+	if major >= 5 {
 		return true
 	}
-	return false
+	return family == "opus" && major == 4 && hasMinor && minor >= 7
+}
+
+var claudeOpusSonnetVersionPattern = regexp.MustCompile(`^(claude-(opus|sonnet))-(\d+)(?:[.-](\d{1,2}))?$`)
+
+func claudeOpusSonnetVersion(model string) (family string, major, minor int, hasMinor, ok bool) {
+	id := normalizeModelAlias(model)
+	matches := claudeOpusSonnetVersionPattern.FindStringSubmatch(id)
+	if matches == nil {
+		return "", 0, 0, false, false
+	}
+	family = matches[2]
+	major, _ = strconv.Atoi(matches[3])
+	if matches[4] != "" {
+		minor, _ = strconv.Atoi(matches[4])
+		hasMinor = true
+	}
+	return family, major, minor, hasMinor, true
+}
+
+// PublicModelID 把 Kiro 上游 modelId 收成客户端使用的短横线名字。
+// 只对 claude- 前缀把全部点号换成短横线：claude-opus-4.8 → claude-opus-4-8。
+// 没有点号的 Claude 名字和非 Claude 名字保持原样。
+func PublicModelID(modelID string) string {
+	id := normalizeModelAlias(modelID)
+	if strings.HasPrefix(id, "claude-") {
+		return strings.ReplaceAll(id, ".", "-")
+	}
+	return id
+}
+
+// ClaudeAliasKey 去掉重复的 -thinking，再把剩余点号全部换成短横线。
+// 只认 claude- 前缀。用来把客户请求和已知上游 ID 的对外名对齐，不猜测点号该落在哪一段。
+func ClaudeAliasKey(model string) (string, bool) {
+	id := normalizeModelAlias(model)
+	if !strings.HasPrefix(id, "claude-") {
+		return "", false
+	}
+	return strings.ReplaceAll(id, ".", "-"), true
+}
+
+// SyncModelAliases 把一条上游 modelId 展开成要写入账号映射的对外名。
+// 值为上游原样 ID。Claude 额外补一行 -thinking，折叠到同一个上游 ID。
+// Haiku 4.5 再补上客户端常用的带日期名，日期不在上游 ID 里，不能从点号折叠得到。
+func SyncModelAliases(modelID string) [][2]string {
+	upstream := strings.TrimSpace(modelID)
+	if upstream == "" {
+		return nil
+	}
+	publicID := PublicModelID(upstream)
+	if publicID == "" {
+		return nil
+	}
+	aliases := [][2]string{{publicID, upstream}}
+	if strings.HasPrefix(publicID, "claude-") && !strings.HasSuffix(publicID, "-thinking") {
+		aliases = append(aliases, [2]string{publicID + "-thinking", upstream})
+	}
+	if publicID == "claude-haiku-4-5" {
+		aliases = append(aliases,
+			[2]string{"claude-haiku-4-5-20251001", upstream},
+			[2]string{"claude-haiku-4-5-20251001-thinking", upstream},
+		)
+	}
+	return aliases
 }
 
 func normalizeModelAlias(model string) string {
@@ -365,17 +444,33 @@ func IsKiroGPTModel(modelID string) bool {
 	}
 }
 
+// kiroMaxOutputTokensForModel 返回模型在 Kiro 上游允许的最大输出 token 数，
+// 对齐 Kiro 官方模型卡片的「最大输出」一栏：GPT-5.6 三兄弟、Opus 4.7+、
+// Sonnet 5.5+ 是 128000；Sonnet 5、Opus 4.6 与各 4.5 及未知模型统一 64000。
 func kiroMaxOutputTokensForModel(model string) int {
 	normalized := normalizeModelAlias(model)
-	switch normalized {
-	// Opus 4.7 / 4.8 / 5 与 Kiro GPT-5.6 精确模型上限 128000（对齐 Kiro 官方规格）。
-	case "claude-opus-4-8", "claude-opus-4.8", "claude-opus-4-7", "claude-opus-4.7",
-		"claude-opus-5",
-		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+	if IsKiroGPTModel(normalized) || isKiro128KOutputClaude(normalized) {
 		return 128000
+	}
+	return kiroDefaultMaxOutputTokens
+}
+
+// isKiro128KOutputClaude 判断 Claude 模型在 Kiro 上游是否开放 128000 输出上限。
+// Opus 4.7 及以上、Sonnet 5.5 及以上；Sonnet 5 仍是 64000，不能按「主版本 >= 5」
+// 一刀切。与 isKiroHighCapabilityClaude（管 thinking 行为）刻意分开：两者的模型
+// 集合不同，Sonnet 5 属高能力档但输出上限仍是 64000。
+func isKiro128KOutputClaude(model string) bool {
+	family, major, minor, hasMinor, ok := claudeOpusSonnetVersion(model)
+	if !ok {
+		return false
+	}
+	switch family {
+	case "opus":
+		return major >= 5 || (major == 4 && hasMinor && minor >= 7)
+	case "sonnet":
+		return major > 5 || (major == 5 && hasMinor && minor >= 5)
 	default:
-		// 其余 Kiro 模型（opus-4.6 / sonnet-5 / sonnet-4.6 / 各 4.5 及未知兜底）统一 64000。
-		return kiroDefaultMaxOutputTokens
+		return false
 	}
 }
 
@@ -465,8 +560,7 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 	if structuredOutputTool != nil {
 		kiroTools = append(kiroTools, *structuredOutputTool)
 	}
-	currentToolResults, orphanedToolUseIDs := validateToolPairing(history, currentToolResults)
-	removeOrphanedToolUses(history, orphanedToolUseIDs)
+	currentToolResults = repairKiroToolPairing(history, currentToolResults)
 	kiroTools = appendMissingPlaceholderTools(kiroTools, collectHistoryToolNames(history))
 	if currentUserMsg != nil {
 		if len(currentUserMsg.Images) > 0 && strings.TrimSpace(currentUserMsg.Content) == "" {
@@ -525,6 +619,11 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 		InferenceConfig:              inferenceConfig,
 		AdditionalModelRequestFields: buildAdditionalModelRequestFields(thinking, modelID),
 	}
+	if err := truncateKiroPayloadToLimit(
+		&payload, strings.TrimSpace(systemPrompt) != "",
+	); err != nil {
+		return nil, err
+	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -533,7 +632,7 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 }
 
 func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, requestCtx KiroRequestContext) (*ParseResult, error) {
-	content, toolUses, usage, stopReason, err := parseEventStream(body)
+	content, toolUses, usage, stopReason, err := parseEventStream(body, requestCtx.TokenizerAlgorithm)
 	if err != nil {
 		return nil, err
 	}
@@ -579,10 +678,8 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	stopSequenceMatched := ""
 	stopSequencePendingText := ""
 	thinkingBuffer := ""
-	var currentThinking strings.Builder
 	inThinkingBlock := false
 	stripThinkingLeadingNewline := false
-	currentMessageID := ""
 	var outputTextBuf strings.Builder
 
 	writeEvent := func(event string, data any) error {
@@ -623,9 +720,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			return err
 		}
 		messageStartSent = true
-		if currentMessageID == "" {
-			currentMessageID = useMsgID
-		}
 		return nil
 	}
 
@@ -639,22 +733,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	closeThinking := func() error {
 		if !thinkingBlockOpen {
 			return nil
-		}
-		if currentThinking.Len() > 0 {
-			sig := thinkingSignature(currentThinking.String(), model, currentMessageID)
-			currentThinking.Reset()
-			if sig != "" {
-				if err := writeEvent("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": thinkingBlockIndex,
-					"delta": map[string]any{
-						"type":      "signature_delta",
-						"signature": sig,
-					},
-				}); err != nil {
-					return err
-				}
-			}
 		}
 		thinkingBlockOpen = false
 		return writeEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": thinkingBlockIndex})
@@ -1020,7 +1098,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 		if text != "" {
 			_, _ = outputTextBuf.WriteString(text)
-			_, _ = currentThinking.WriteString(text)
 		}
 		return writeEvent("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
@@ -1301,7 +1378,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		return nil, err
 	}
 	if usage.OutputTokens == 0 {
-		if est := anthropictokenizer.CountTokens(outputTextBuf.String()); est > 0 {
+		if est := requestCtx.TokenizerAlgorithm.CountTokens(outputTextBuf.String()); est > 0 {
 			usage.OutputTokens = est
 		}
 	}
@@ -1446,28 +1523,26 @@ func thinkingDirectiveFromModel(model string) *thinkingDirective {
 		return nil
 	}
 
-	switch normalizeModelAlias(model) {
+	alias := normalizeModelAlias(model)
+	switch alias {
 	case "claude-opus-4-6", "claude-opus-4.6":
 		return &thinkingDirective{
 			Mode:         "adaptive",
 			BudgetTokens: 20000,
 			Effort:       "high",
 		}
-	// opus 4.7/4.8/5 走 adaptive 高预算,budget 对齐 Antigravity 的 ClaudeAdaptiveHighThinkingBudgetTokens
-	// 避免 thinking 提前耗尽导致流式中途断开
-	case "claude-opus-4-7", "claude-opus-4.7",
-		"claude-opus-4-8", "claude-opus-4.8",
-		"claude-opus-5":
+	}
+	// Opus 4.7+ 与主版本 >= 5 走 adaptive 高预算，避免 thinking 提前耗尽导致流式中途断开。
+	if isKiroHighCapabilityClaude(alias) {
 		return &thinkingDirective{
 			Mode:         "adaptive",
 			BudgetTokens: 24576,
 			Effort:       "high",
 		}
-	default:
-		return &thinkingDirective{
-			Mode:         "enabled",
-			BudgetTokens: 20000,
-		}
+	}
+	return &thinkingDirective{
+		Mode:         "enabled",
+		BudgetTokens: 20000,
 	}
 }
 
@@ -1885,7 +1960,7 @@ func appendChunkedToolDescription(name, description string) string {
 	if len(joined) <= kiroMaxToolDescLen {
 		return joined
 	}
-	const truncationMarker = "... (description truncated)"
+	const truncationMarker = "..."
 	baseLimit := kiroMaxToolDescLen - len(suffix) - 1 - len(truncationMarker)
 	if baseLimit <= 0 {
 		return truncateKiroToolDescription(joined)
@@ -1908,7 +1983,7 @@ func truncateKiroToolDescription(description string) string {
 	if len(description) <= kiroMaxToolDescLen {
 		return description
 	}
-	return truncateUTF8(description, kiroMaxToolDescLen-30) + "... (description truncated)"
+	return truncateUTF8(description, kiroMaxToolDescLen-len("...")) + "..."
 }
 
 func truncateUTF8(s string, limit int) string {
@@ -1924,31 +1999,184 @@ func truncateUTF8(s string, limit int) string {
 	return s[:limit]
 }
 
-func tailUTF8(s string, limit int) string {
-	if limit <= 0 {
-		return ""
+// truncateKiroPayloadToLimit 在序列化体积超过 kiroMaxPayloadBytes 时丢掉最旧历史。
+// 系统提示对、最近若干轮和当前消息保留。只有确实丢掉旧轮次时才插入一次占位。
+// 丢掉之后仍然超限，则静默缩短当前消息正文和仍保留的工具结果，不附加截断说明。
+func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) error {
+	if payload == nil || kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes {
+		return nil
 	}
-	if len(s) <= limit {
-		return s
+
+	history := payload.ConversationState.History
+	primingCount := 0
+	if hasPriming && len(history) >= 2 {
+		primingCount = 2
 	}
-	start := len(s) - limit
-	for start < len(s) && !utf8.RuneStart(s[start]) {
-		start++
+	priming := append([]KiroHistoryMessage(nil), history[:primingCount]...)
+	conversation := history[primingCount:]
+
+	current := payload.ConversationState.CurrentMessage.UserInputMessage
+	origin := current.Origin
+	if origin == "" {
+		origin = "AI_EDITOR"
 	}
-	return s[start:]
+	placeholderEntry := KiroHistoryMessage{
+		UserInputMessage: &KiroUserInputMessage{
+			Content: kiroHistoryTruncationPlaceholder,
+			ModelID: current.ModelID,
+			Origin:  origin,
+		},
+	}
+
+	entrySizes := make([]int, len(conversation))
+	for i := range conversation {
+		entrySizes[i] = kiroHistoryEntryByteSize(conversation[i])
+	}
+
+	payload.ConversationState.History = priming
+	baseSize := kiroPayloadByteSize(payload) + kiroHistoryEntryByteSize(placeholderEntry)
+
+	keepFrom := len(conversation)
+	running := baseSize
+	for i := len(conversation) - 1; i >= 0; i-- {
+		running += entrySizes[i]
+		kept := len(conversation) - i
+		if running > kiroMaxPayloadBytes && kept > kiroMinRecentHistoryTurns {
+			break
+		}
+		keepFrom = i
+	}
+
+	// Preserve the assistant tool_use at the truncation boundary.
+	// Dropping it can orphan a retained user tool_result.
+	tail := conversation[keepFrom:]
+	if keepFrom > 0 && len(tail) > 0 {
+		first := tail[0].UserInputMessage
+		if first != nil && first.UserInputMessageContext != nil &&
+			len(first.UserInputMessageContext.ToolResults) > 0 &&
+			conversation[keepFrom-1].AssistantResponseMessage != nil {
+			tail = conversation[keepFrom-1:]
+		}
+	}
+	rebuilt := make([]KiroHistoryMessage, 0, len(priming)+1+len(tail))
+	rebuilt = append(rebuilt, priming...)
+	if keepFrom > 0 {
+		rebuilt = append(rebuilt, placeholderEntry)
+	}
+	rebuilt = append(rebuilt, tail...)
+	payload.ConversationState.History = rebuilt
+
+	shrinkKiroPayloadText(payload)
+	if kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes &&
+		kiroTailToolResultsPaired(tail, current) {
+		return nil
+	}
+
+	// If the payload is still too large, discard further old history.
+	// Only accept cuts that preserve tool_result pairing.
+	for cut := keepFrom + 1; cut <= len(conversation); cut++ {
+		if len(conversation)-cut < kiroMinRecentHistoryTurns {
+			break
+		}
+		candidate := conversation[cut:]
+		if !kiroTailToolResultsPaired(candidate, current) {
+			continue
+		}
+
+		rebuilt := append([]KiroHistoryMessage(nil), priming...)
+		if cut > 0 && len(candidate) > 0 {
+			rebuilt = append(rebuilt, placeholderEntry)
+		}
+		rebuilt = append(rebuilt, candidate...)
+		payload.ConversationState.History = rebuilt
+
+		shrinkKiroPayloadText(payload)
+		if kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes {
+			return nil
+		}
+	}
+
+	return fmt.Errorf(
+		"kiro payload exceeds %d bytes without a safe history cut",
+		kiroMaxPayloadBytes,
+	)
 }
 
-func compactKiroToolResultText(text string, isError bool) string {
-	if isError || len(text) <= kiroToolResultCompactLimit {
-		return text
+func dropLeadingKiroAssistantHistory(tail []KiroHistoryMessage) []KiroHistoryMessage {
+	for len(tail) > 0 && tail[0].AssistantResponseMessage != nil {
+		tail = tail[1:]
 	}
-	head := truncateUTF8(text, kiroToolResultKeepHead)
-	tail := tailUTF8(text, kiroToolResultKeepTail)
-	omitted := utf8.RuneCountInString(text) - utf8.RuneCountInString(head) - utf8.RuneCountInString(tail)
-	if omitted < 0 {
-		omitted = 0
+	return tail
+}
+
+func kiroHistoryEntryByteSize(entry KiroHistoryMessage) int {
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		return 0
 	}
-	return head + fmt.Sprintf("\n\n[Output truncated for Kiro context: original chars=%d, omitted chars=%d]\n\n", utf8.RuneCountInString(text), omitted) + tail
+	return len(raw) + 1
+}
+
+func kiroPayloadByteSize(payload *KiroPayload) int {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0
+	}
+	return len(raw)
+}
+
+func shrinkKiroPayloadText(payload *KiroPayload) {
+	for {
+		size := kiroPayloadByteSize(payload)
+		if size <= kiroMaxPayloadBytes {
+			return
+		}
+		target := longestKiroShrinkableText(payload)
+		if target == nil || len(*target) == 0 {
+			return
+		}
+		nextLen := len(*target) - (size - kiroMaxPayloadBytes)
+		if nextLen < 0 {
+			nextLen = 0
+		}
+		shortened := truncateUTF8(*target, nextLen)
+		if len(shortened) >= len(*target) {
+			*target = ""
+			continue
+		}
+		*target = shortened
+	}
+}
+
+func longestKiroShrinkableText(payload *KiroPayload) *string {
+	var longest *string
+	consider := func(text *string) {
+		if longest == nil || len(*text) > len(*longest) {
+			longest = text
+		}
+	}
+	current := &payload.ConversationState.CurrentMessage.UserInputMessage
+	consider(&current.Content)
+	appendKiroToolResultTexts(current.UserInputMessageContext, consider)
+	for i := range payload.ConversationState.History {
+		msg := payload.ConversationState.History[i].UserInputMessage
+		if msg == nil {
+			continue
+		}
+		appendKiroToolResultTexts(msg.UserInputMessageContext, consider)
+	}
+	return longest
+}
+
+func appendKiroToolResultTexts(ctx *KiroUserInputMessageContext, consider func(*string)) {
+	if ctx == nil {
+		return
+	}
+	for i := range ctx.ToolResults {
+		for j := range ctx.ToolResults[i].Content {
+			consider(&ctx.ToolResults[i].Content[j].Text)
+		}
+	}
 }
 
 func newClaudeMessageID() string {
@@ -2126,8 +2354,7 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 		last := i == len(messagesArray)-1
 		switch role {
 		case "user":
-			keepImages := last || len(messagesArray)-1-i <= kiroHistoryImageKeepCount
-			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin, keepImages)
+			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin)
 			if strings.TrimSpace(userMsg.Content) == "" {
 				if len(toolResults) > 0 {
 					userMsg.Content = "Tool results provided."
@@ -2162,55 +2389,56 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 	return history, currentUserMsg, currentToolResults
 }
 
-func validateToolPairing(history []KiroHistoryMessage, currentToolResults []KiroToolResult) ([]KiroToolResult, map[string]bool) {
-	allToolUseIDs := make(map[string]bool)
-	pairedToolUseIDs := make(map[string]bool)
-	for _, h := range history {
-		if h.AssistantResponseMessage != nil {
-			for _, tu := range h.AssistantResponseMessage.ToolUses {
-				allToolUseIDs[tu.ToolUseID] = true
+// repairKiroToolPairing 按相邻位置修复 toolUses/toolResults 配对，返回修复后的当前消息
+// toolResults。上游要求每条 toolResult 都能在紧邻的上一条 assistant 消息里找到对应
+// toolUse，每条 toolUse 都在紧随其后的 user 消息里有 toolResult；只要 ID 在整段历史里
+// 出现过并不够，不相邻同样会被 400 拒绝（"unexpected tool_use_id found in tool_result
+// blocks"）。历史消息与当前消息都要校验，配不上的一律丢弃。
+func repairKiroToolPairing(history []KiroHistoryMessage, currentToolResults []KiroToolResult) []KiroToolResult {
+	var prev *KiroAssistantResponseMessage
+	for i := range history {
+		user := history[i].UserInputMessage
+		if user != nil && user.UserInputMessageContext != nil {
+			ctx := user.UserInputMessageContext
+			ctx.ToolResults = keepPairedKiroTools(prev, ctx.ToolResults)
+			if len(ctx.ToolResults) == 0 && len(ctx.Tools) == 0 {
+				user.UserInputMessageContext = nil
 			}
+		} else {
+			keepPairedKiroTools(prev, nil)
 		}
-		if h.UserInputMessage != nil && h.UserInputMessage.UserInputMessageContext != nil {
-			for _, tr := range h.UserInputMessage.UserInputMessageContext.ToolResults {
-				pairedToolUseIDs[tr.ToolUseID] = true
-			}
-		}
+		prev = history[i].AssistantResponseMessage
 	}
-
-	filtered := currentToolResults[:0]
-	for _, tr := range currentToolResults {
-		if allToolUseIDs[tr.ToolUseID] && !pairedToolUseIDs[tr.ToolUseID] {
-			filtered = append(filtered, tr)
-			pairedToolUseIDs[tr.ToolUseID] = true
-		}
-	}
-	orphaned := make(map[string]bool)
-	for toolUseID := range allToolUseIDs {
-		if !pairedToolUseIDs[toolUseID] {
-			orphaned[toolUseID] = true
-		}
-	}
-	return filtered, orphaned
+	return keepPairedKiroTools(prev, currentToolResults)
 }
 
-func removeOrphanedToolUses(history []KiroHistoryMessage, orphaned map[string]bool) {
-	if len(orphaned) == 0 {
-		return
+// keepPairedKiroTools 只保留 assistant.ToolUses 与紧随其后的 toolResults 的交集：
+// 没有对应 toolUse 的 toolResult 被丢弃（重复 ID 只留第一条），没被应答的 toolUse 从
+// assistant 上摘掉。assistant 为 nil 表示前一条不是 assistant 消息。
+func keepPairedKiroTools(assistant *KiroAssistantResponseMessage, toolResults []KiroToolResult) []KiroToolResult {
+	if assistant == nil || len(assistant.ToolUses) == 0 {
+		return toolResults[:0]
 	}
-	for i := range history {
-		msg := history[i].AssistantResponseMessage
-		if msg == nil || len(msg.ToolUses) == 0 {
-			continue
-		}
-		filtered := msg.ToolUses[:0]
-		for _, toolUse := range msg.ToolUses {
-			if !orphaned[toolUse.ToolUseID] {
-				filtered = append(filtered, toolUse)
-			}
-		}
-		msg.ToolUses = filtered
+	announced := make(map[string]bool, len(assistant.ToolUses))
+	for _, toolUse := range assistant.ToolUses {
+		announced[toolUse.ToolUseID] = true
 	}
+	answered := make(map[string]bool, len(toolResults))
+	keptResults := toolResults[:0]
+	for _, tr := range toolResults {
+		if announced[tr.ToolUseID] && !answered[tr.ToolUseID] {
+			answered[tr.ToolUseID] = true
+			keptResults = append(keptResults, tr)
+		}
+	}
+	keptUses := assistant.ToolUses[:0]
+	for _, toolUse := range assistant.ToolUses {
+		if answered[toolUse.ToolUseID] {
+			keptUses = append(keptUses, toolUse)
+		}
+	}
+	assistant.ToolUses = keptUses
+	return keptResults
 }
 
 func collectHistoryToolNames(history []KiroHistoryMessage) []string {
@@ -2295,12 +2523,11 @@ func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
 	return out
 }
 
-func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages bool) (KiroUserInputMessage, []KiroToolResult) {
+func buildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserInputMessage, []KiroToolResult) {
 	content := msg.Get("content")
 	var contentBuilder strings.Builder
 	var toolResults []KiroToolResult
 	var images []KiroImage
-	omittedImageCount := 0
 	seenToolUseIDs := make(map[string]bool)
 
 	if content.IsArray() {
@@ -2318,11 +2545,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 					}
 					continue
 				}
-				if keepImages {
-					images = append(images, image)
-				} else {
-					omittedImageCount++
-				}
+				images = append(images, image)
 			case "image_url", "input_image":
 				url := strings.TrimSpace(part.Get("image_url.url").String())
 				if url == "" {
@@ -2332,11 +2555,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 					url = strings.TrimSpace(part.Get("source.url").String())
 				}
 				if image, ok := buildKiroImageFromURL(url); ok {
-					if keepImages {
-						images = append(images, image)
-					} else {
-						omittedImageCount++
-					}
+					images = append(images, image)
 				} else if strings.HasPrefix(strings.ToLower(url), "http://") || strings.HasPrefix(strings.ToLower(url), "https://") {
 					appendImageURLFallback(&contentBuilder, url)
 				}
@@ -2366,13 +2585,13 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 						// codex 经 responses->anthropic 后, tool_result.content 用 Responses 的
 						// "input_text" 而非 Anthropic 的 "text"; 两者都需提取, 否则工具结果被丢成空。
 						if t := item.Get("type").String(); t == "text" || t == "input_text" {
-							textContents = append(textContents, KiroTextContent{Text: compactKiroToolResultText(item.Get("text").String(), status == "error")})
+							textContents = append(textContents, KiroTextContent{Text: item.Get("text").String()})
 						} else if item.Type == gjson.String {
-							textContents = append(textContents, KiroTextContent{Text: compactKiroToolResultText(item.String(), status == "error")})
+							textContents = append(textContents, KiroTextContent{Text: item.String()})
 						}
 					}
 				} else if resultContent.Type == gjson.String {
-					textContents = []KiroTextContent{{Text: compactKiroToolResultText(resultContent.String(), status == "error")}}
+					textContents = []KiroTextContent{{Text: resultContent.String()}}
 				}
 				toolResults = append(toolResults, KiroToolResult{
 					ToolUseID: toolUseID,
@@ -2383,16 +2602,6 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 		}
 	} else {
 		_, _ = contentBuilder.WriteString(content.String())
-	}
-
-	if omittedImageCount > 0 {
-		placeholder := fmt.Sprintf(omittedHistoryImageFormat, omittedImageCount)
-		if strings.TrimSpace(contentBuilder.String()) == "" {
-			_, _ = contentBuilder.WriteString(placeholder)
-		} else {
-			_, _ = contentBuilder.WriteString("\n")
-			_, _ = contentBuilder.WriteString(placeholder)
-		}
 	}
 
 	userMsg := KiroUserInputMessage{
@@ -2574,7 +2783,7 @@ func buildDocumentTextFallback(part gjson.Result) string {
 		return ""
 	}
 	if utf8.RuneCountInString(text) > 6000 {
-		text = truncateUTF8(text, 6000) + "\n[PDF text truncated]"
+		text = truncateUTF8(text, 6000)
 	}
 	sum := sha256.Sum256(raw)
 	if name == "" {
@@ -2961,7 +3170,7 @@ func blockToMap(block gjson.Result) map[string]any {
 	return result
 }
 
-func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, error) {
+func parseEventStream(body io.Reader, alg anthropictokenizer.Algorithm) (string, []KiroToolUse, Usage, string, error) {
 	reader := bufio.NewReader(body)
 	var content strings.Builder
 	var toolUses []KiroToolUse
@@ -3071,7 +3280,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 				_, _ = outputBuf.Write(b)
 			}
 		}
-		if est := anthropictokenizer.CountTokens(outputBuf.String()); est > 0 {
+		if est := alg.CountTokens(outputBuf.String()); est > 0 {
 			usage.OutputTokens = est
 		}
 	}
@@ -3091,7 +3300,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, usage Usage, stopReason string, requestCtx KiroRequestContext) []byte {
 	msgID := newClaudeMessageID()
 	var blocks []map[string]any
-	blocks = append(blocks, extractThinkingBlocksWithSignature(content, model, msgID)...)
+	blocks = append(blocks, extractThinkingBlocks(content)...)
 	stopSequence := ""
 	if len(toolUses) == 0 {
 		if nextBlocks, matched := applyStopSequencesToTextBlocks(blocks, requestCtx.StopSequences); matched != "" {
@@ -3201,6 +3410,8 @@ func applyMaxOutputTokensToTextBlocks(blocks []map[string]any, maxTokens int) ([
 	}
 	remaining := maxTokens
 	out := make([]map[string]any, 0, len(blocks))
+	// max_tokens 截断是官方 token 语义的功能行为：始终使用官方算法计数，
+	// 不随计量口径（KiroRequestContext.TokenizerAlgorithm）膨胀而提前截断。
 	for _, block := range blocks {
 		if block["type"] != "text" {
 			out = append(out, block)
@@ -3347,10 +3558,6 @@ func hasThinkingBlocksOnly(blocks []map[string]any) bool {
 }
 
 func extractThinkingBlocks(content string) []map[string]any {
-	return extractThinkingBlocksWithSignature(content, "claude", newClaudeMessageID())
-}
-
-func extractThinkingBlocksWithSignature(content, model, msgID string) []map[string]any {
 	if content == "" {
 		return nil
 	}
@@ -3363,9 +3570,8 @@ func extractThinkingBlocksWithSignature(content, model, msgID string) []map[stri
 		thinking := pendingThinking.String()
 		if strings.TrimSpace(thinking) != "" {
 			blocks = append(blocks, map[string]any{
-				"type":      "thinking",
-				"thinking":  thinking,
-				"signature": thinkingSignature(thinking, model, msgID),
+				"type":     "thinking",
+				"thinking": thinking,
 			})
 		}
 		pendingThinking.Reset()

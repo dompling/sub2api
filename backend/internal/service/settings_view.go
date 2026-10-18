@@ -169,6 +169,7 @@ type SystemSettings struct {
 	DefaultBalance               float64
 	RiskControlEnabled           bool
 	CyberSessionBlockEnabled     bool
+	CyberPolicyUserAllowlist     string
 	CyberSessionBlockTTLSeconds  int
 	AffiliateEnabled             bool
 	AffiliateRebateRate          float64
@@ -236,6 +237,7 @@ type SystemSettings struct {
 
 	// Gateway forwarding behavior
 	OpenAITTFTMode                         string                            // Responses first_token_ms 统计口径（默认 semantic）
+	GatewayKiroTokenizer                   string                            // Kiro 计量算法（official/charclass/weighted，默认 official）
 	EnableFingerprintUnification           bool                              // 是否统一 OAuth 账号的指纹头（默认 true）
 	EnableMetadataPassthrough              bool                              // 是否透传客户端原始 metadata（默认 false）
 	EnableCCHSigning                       bool                              // 已废弃 no-op：新版 CLI 取消 cch 签名后网关不再注入/签名 cch，开关无效果
@@ -255,6 +257,9 @@ type SystemSettings struct {
 	OpenAICodexTicketHarvestProxyURL       string                            // 打票专用代理 URL；空则回退 yaml/env
 	OpenAICodexTicketDefaultLength         int                               // 门票默认目标长度；后台未配置时回退 yaml target_length
 	OpenAICodexTicketPlanLengthRules       []OpenAICodexTicketPlanLengthRule // 订阅档位长度规则（plan_type 子串匹配，先命中先生效）
+	ClaudeCodeClientVersion                string                            // 出站声明的 Claude Code CLI 客户端版本号（管理员覆写）；空值跟随自动同步值
+	ClaudeCodeClientVersionSynced          string                            // 自动同步到的官方最新版本号（只读展示）
+	ClaudeCodeVersionAutoSyncEnabled       bool                              // 是否启用 Claude Code 客户端版本号自动同步（默认 true）
 	MinCodexVersion                        string                            // codex_cli_only 最低 Codex 引擎版本；空=不检查
 	MaxCodexVersion                        string                            // codex_cli_only 最高 Codex 引擎版本；空=不检查
 	CodexCLIOnlyBlacklist                  string                            // codex_cli_only 全局黑名单 JSON（[]AllowedClientEntry，OR deny）
@@ -273,7 +278,7 @@ type SystemSettings struct {
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool
-	OpenAIOAuthSchedulingRateMultiplier                    float64
+	OpenAIOAuthSchedulingRateMultiplier                    *float64
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool

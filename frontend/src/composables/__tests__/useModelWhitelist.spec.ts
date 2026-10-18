@@ -5,14 +5,45 @@ vi.mock('@/api/admin/accounts', () => ({
 }))
 
 import {
+  appendKiroSyncedMappings,
   buildModelMappingObject,
   fetchKiroDefaultMappings,
   getModelsByPlatform,
   getPresetMappingsByPlatform,
+  kiroUpstreamModelID,
   splitModelMappingObject
 } from '../useModelWhitelist'
+import { BUILTIN_PLATFORM_CATALOG, resetPlatformCatalog, setPlatformCatalog } from '@/constants/platformCatalog'
 
 describe('useModelWhitelist', () => {
+  it('平台清单中没有内置模型列表的多协议供应商不预填白名单', () => {
+    setPlatformCatalog({
+      ...BUILTIN_PLATFORM_CATALOG,
+      platforms: [
+        ...BUILTIN_PLATFORM_CATALOG.platforms,
+        {
+          id: 'acme_router',
+          display_name: 'Acme Router',
+          gateway: 'openai',
+          cn_provider: false,
+          multi_protocol: {
+            default_mode: 'standard',
+            routing: 'by_model',
+            modes: [{ mode: 'standard', base_urls: { chat_completions: 'https://api.acme-router.example/v1' } }]
+          }
+        }
+      ]
+    })
+    try {
+      expect(getModelsByPlatform('acme_router')).toEqual([])
+      expect(getModelsByPlatform('kimi').length).toBeGreaterThan(0)
+      // 非多协议供应商的未知平台维持原有回退。
+      expect(getModelsByPlatform('bedrock')).toEqual(getModelsByPlatform('anthropic'))
+    } finally {
+      resetPlatformCatalog()
+    }
+  })
+
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
     const models = getModelsByPlatform('openai')
 
@@ -23,10 +54,14 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gpt-5.6')
     expect(models).toContain('gpt-6')
     expect(models).toContain('gpt-6-astra')
+    expect(models).toContain('gpt-6.1-sol')
+    expect(models).toContain('gpt-6-sol')
+    expect(models).toContain('gpt-6-luna')
   })
 
   it('openai 预设映射包含 GPT-6 别名和 Astra', () => {
     expect(getPresetMappingsByPlatform('openai')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'GPT-6.1 Sol', from: 'gpt-6.1-sol', to: 'gpt-6.1-sol' }),
       expect.objectContaining({ label: 'GPT-6', from: 'gpt-6', to: 'gpt-6' }),
       expect.objectContaining({ label: 'GPT-6 Astra', from: 'gpt-6-astra', to: 'gpt-6-astra' })
     ]))
@@ -56,8 +91,31 @@ describe('useModelWhitelist', () => {
     expect(getModelsByPlatform('antigravity')).toContain('claude-fable-5-1')
     expect(getModelsByPlatform('claude')).toContain('claude-fable-5')
     expect(getModelsByPlatform('antigravity')).toContain('claude-fable-5')
+    expect(getModelsByPlatform('claude')).toContain('claude-opus-5-5')
+    expect(getModelsByPlatform('antigravity')).not.toContain('claude-opus-5-5')
+    expect(getModelsByPlatform('claude')).toContain('claude-sonnet-5-5')
+    expect(getModelsByPlatform('antigravity')).not.toContain('claude-sonnet-5-5')
     expect(getModelsByPlatform('claude')).toContain('claude-opus-4-8')
     expect(getModelsByPlatform('antigravity')).toContain('claude-opus-4-8')
+  })
+
+  it('Claude Sonnet 5.5 预设使用各平台的官方模型 ID', () => {
+    expect(getPresetMappingsByPlatform('claude')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Sonnet 5.5', from: 'claude-sonnet-5-5', to: 'claude-sonnet-5-5' })
+    ]))
+    expect(getPresetMappingsByPlatform('bedrock')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Sonnet 5.5', from: 'claude-sonnet-5-5', to: 'global.anthropic.claude-sonnet-5-5' })
+    ]))
+  })
+
+  it('Claude 默认白名单保存后允许 Haiku 5.5，预设使用同一模型 ID', () => {
+    const models: string[] = getModelsByPlatform('anthropic')
+    const mapping: Record<string, string> | null = buildModelMappingObject('whitelist', models, [])
+
+    expect(mapping?.['claude-haiku-5-5']).toBe('claude-haiku-5-5')
+    expect(getPresetMappingsByPlatform('anthropic')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Haiku 5.5', from: 'claude-haiku-5-5', to: 'claude-haiku-5-5' })
+    ]))
   })
 
   it('xAI 模型列表包含 Grok 4.5 官方模型和别名', () => {
@@ -142,8 +200,12 @@ describe('useModelWhitelist', () => {
       'claude-opus-4-6-thinking',
       'claude-opus-5',
       'claude-opus-5-thinking',
+      'claude-opus-5-5',
+      'claude-opus-5-5-thinking',
       'claude-sonnet-5',
       'claude-sonnet-5-thinking',
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5-thinking',
       'claude-sonnet-4-6',
       'claude-sonnet-4-6-thinking',
       'claude-opus-4-5-20251101',
@@ -191,6 +253,21 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gemini-3.1-pro')
   })
 
+  it('Gemini 4 Argon 在 gemini 与 antigravity 平台使用对应真实模型 ID 与预设映射', () => {
+    expect(getModelsByPlatform('gemini')).toContain('gemini-4-argon')
+    const agModels = getModelsByPlatform('antigravity')
+    expect(agModels).not.toContain('gemini-4-argon')
+    expect(agModels).toContain('gemini-4-argon-high')
+    expect(agModels).toContain('gemini-4-argon-medium')
+    expect(agModels).toContain('gemini-4-argon-low')
+    expect(getPresetMappingsByPlatform('antigravity')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'gemini-4-argon', to: 'gemini-4-argon-high' }),
+      expect.objectContaining({ from: 'gemini-4-argon-high', to: 'gemini-4-argon-high' }),
+      expect.objectContaining({ from: 'gemini-4-argon-medium', to: 'gemini-4-argon-medium' }),
+      expect.objectContaining({ from: 'gemini-4-argon-low', to: 'gemini-4-argon-low' })
+    ]))
+  })
+
   it('whitelist 模式会忽略通配符条目', () => {
     const mapping = buildModelMappingObject('whitelist', ['claude-*', 'gemini-3.1-flash-image'], [])
     expect(mapping).toEqual({
@@ -232,8 +309,12 @@ describe('useModelWhitelist', () => {
       { from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6' },
       { from: 'claude-opus-5', to: 'claude-opus-5' },
       { from: 'claude-opus-5-thinking', to: 'claude-opus-5' },
+      { from: 'claude-opus-5-5', to: 'claude-opus-5.5' },
+      { from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5' },
       { from: 'claude-sonnet-5', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5' },
+      { from: 'claude-sonnet-5-5', to: 'claude-sonnet-5.5' },
+      { from: 'claude-sonnet-5-5-thinking', to: 'claude-sonnet-5.5' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
       { from: 'claude-sonnet-4-6-thinking', to: 'claude-sonnet-4.6' },
       { from: 'claude-opus-4-5-20251101', to: 'claude-opus-4.5' },
@@ -286,8 +367,12 @@ describe('useModelWhitelist', () => {
       { from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6' },
       { from: 'claude-opus-5', to: 'claude-opus-5' },
       { from: 'claude-opus-5-thinking', to: 'claude-opus-5' },
+      { from: 'claude-opus-5-5', to: 'claude-opus-5.5' },
+      { from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5' },
       { from: 'claude-sonnet-5', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5' },
+      { from: 'claude-sonnet-5-5', to: 'claude-sonnet-5.5' },
+      { from: 'claude-sonnet-5-5-thinking', to: 'claude-sonnet-5.5' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
       { from: 'claude-sonnet-4-6-thinking', to: 'claude-sonnet-4.6' },
       { from: 'claude-opus-4-5-20251101', to: 'claude-opus-4.5' },
@@ -297,7 +382,7 @@ describe('useModelWhitelist', () => {
       { from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5' },
       { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' }
     ]))
-    expect(mappings).toHaveLength(22)
+    expect(mappings).toHaveLength(26)
     expect(mappings.every(item => !item.from.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.to.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.from.endsWith('-agentic'))).toBe(true)
@@ -309,60 +394,29 @@ describe('useModelWhitelist', () => {
     expect(mappings.some(item => item.to === 'claude-opus-4-7')).toBe(false)
   })
 
-  // 逐条对齐 backend/internal/domain/constants.go 的 DefaultAdobeModelMapping
-  // 与 backend/internal/pkg/adobe 的 externalImageModelAliases。
-  //
-  // Step 10 起 Adobe 用通用的白名单/映射区块，不再预填这 17 行；但它们仍是「映射」
-  // 模式的快捷 chips，点一下就会原样写进 credentials.model_mapping，两边漂移
-  // 就是静默的路由错误。
-  it('adobe 预设映射与后端 DefaultAdobeModelMapping 逐条一致', () => {
-    const mappings = getPresetMappingsByPlatform('adobe')
-
-    const asObject = Object.fromEntries(mappings.map(({ from, to }) => [from, to]))
-    expect(asObject).toEqual({
-      'gpt-image-2': 'firefly-gpt-image-2',
-      'gpt-image-1.5': 'firefly-gpt-image-1.5',
-      // Step 8：sunburst 是 UI 展示名，映到上游 modelVersion=gpt-image-2.5-prism。
-      'gpt-image-2.5-sunburst': 'firefly-gpt-image-2-5-prism',
-      'gpt-image-2.5-prism': 'firefly-gpt-image-2-5-prism',
-      'gpt-image-2.5-flare': 'firefly-gpt-image-2-5-flare',
-      'gpt-image': 'firefly-gpt-image-2',
-      'gpt-image-1': 'firefly-gpt-image-2',
-      'gpt-image-1-mini': 'firefly-gpt-image-2',
-      'nano-banana-pro': 'firefly-nano-banana-pro',
-      'nano-banana2': 'firefly-nano-banana2',
-      'nano-banana': 'firefly-nano-banana',
-      'flux-pro': 'firefly-flux-pro',
-      'flux-ultra': 'firefly-flux-ultra',
-      'imagen-4': 'firefly-imagen-4',
-      'imagen-4-fast': 'firefly-imagen-4-fast',
-      'gpt-4o-image': 'firefly-gpt-4o-image',
-      'runway-gen4-image': 'firefly-runway-gen4-image'
-      // Step 8：所有 firefly-* 左侧的直通条目已删除。用户面只有干净外部名。
-    })
-    expect(mappings).toHaveLength(17)
-  })
-
-  // Step 8：用户面看到的每个模型（getModelsByPlatform('adobe')）都必须能在预设里找到——
-  // 否则用户看到一个 id 但预设映射不到，做出的映射条目会打不通。
-  // to 是内部族 id（firefly-*），不再等于 from。
-  it('adobe 预设映射覆盖 adobeModels 里的每个外部名', () => {
-    const presets = getPresetMappingsByPlatform('adobe')
-    const froms = new Set(presets.map(item => item.from))
-
-    for (const externalID of getModelsByPlatform('adobe')) {
-      expect(froms.has(externalID)).toBe(true)
-      expect(externalID.startsWith('firefly-')).toBe(false)  // 干净外部名，不带前缀
+  it('kiro Sonnet 5.5 四种写法解析到同一上游 ID，直连白名单存恒等', () => {
+    for (const name of [
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5-thinking',
+      'claude-sonnet-5.5',
+      'claude-sonnet-5.5-thinking'
+    ]) {
+      expect(kiroUpstreamModelID(name)).toBe('claude-sonnet-5.5')
     }
+
+    const mapping = buildModelMappingObject('whitelist', ['claude-sonnet-5-5'], [], {
+      kiroDirect: true
+    })
+    expect(mapping).toEqual({ 'claude-sonnet-5-5': 'claude-sonnet-5-5' })
   })
 
-  it('adobe 映射支持通配符前缀，且目标模型不允许带通配符', () => {
+  it('映射支持通配符前缀，且目标模型不允许带通配符', () => {
     expect(
-      buildModelMappingObject('mapping', [], [{ from: 'gpt-image-*', to: 'firefly-gpt-image-2' }])
-    ).toEqual({ 'gpt-image-*': 'firefly-gpt-image-2' })
+      buildModelMappingObject('mapping', [], [{ from: 'gpt-image-*', to: 'gpt-image-2' }])
+    ).toEqual({ 'gpt-image-*': 'gpt-image-2' })
 
     expect(
-      buildModelMappingObject('mapping', [], [{ from: 'gpt-image-2', to: 'firefly-*' }])
+      buildModelMappingObject('mapping', [], [{ from: 'gpt-image-2', to: 'gpt-image-*' }])
     ).toBeNull()
   })
 
@@ -379,6 +433,146 @@ describe('useModelWhitelist', () => {
     expect(mapping).toEqual({
       'gpt-5.4': 'gpt-5.4-mini',
       'gpt-latest': 'gpt-5.4'
+    })
+  })
+
+  it('kiro 新模型用同步带回的上游 ID，未知名字不再猜点号', () => {
+    expect(kiroUpstreamModelID('claude-opus-4-8')).toBe('claude-opus-4.8')
+    expect(kiroUpstreamModelID('claude-opus-4-5-20251101')).toBe('claude-opus-4.5')
+    expect(kiroUpstreamModelID('claude-opus-4-9')).toBe('claude-opus-4-9')
+    expect(kiroUpstreamModelID('claude-opus-4-9', { 'claude-opus-4-9': 'claude-opus-4.9' })).toBe('claude-opus-4.9')
+
+    const mapping = buildModelMappingObject(
+      'whitelist',
+      ['claude-opus-4-9', 'claude-opus-4-8'],
+      [],
+      { kiroDirect: true, kiroUpstreamIDs: { 'claude-opus-4-9': 'claude-opus-4.9' } }
+    )
+    expect(mapping).toEqual({
+      'claude-opus-4-9': 'claude-opus-4-9',
+      'claude-opus-4-8': 'claude-opus-4-8'
+    })
+  })
+
+  it('kiro 直连白名单保存为恒等映射，自定义行盖过同名白名单', () => {
+    const mapping = buildModelMappingObject(
+      'combined',
+      ['claude-opus-4-5', 'claude-sonnet-4-thinking'],
+      [{ from: 'claude-opus-4-5', to: 'claude-sonnet-4.6' }],
+      { kiroDirect: true }
+    )
+    expect(mapping).toEqual({
+      'claude-opus-4-5': 'claude-sonnet-4.6',
+      'claude-sonnet-4-thinking': 'claude-sonnet-4-thinking'
+    })
+  })
+
+  it('kiro 旧的点号行归回白名单，不同模型仍留在映射', () => {
+    const parsed = splitModelMappingObject(
+      {
+        'claude-haiku-4-5': 'claude-haiku-4.5',
+        'claude-haiku-4-5-thinking': 'claude-haiku-4.5',
+        'claude-opus-4-5': 'claude-opus-4.5',
+        'claude-opus-4-5-thinking': 'claude-opus-4.5',
+        'claude-sonnet-4-5': 'claude-sonnet-4.5',
+        'claude-sonnet-4-5-thinking': 'claude-sonnet-4.5',
+        'claude-sonnet-4-thinking': 'claude-sonnet-4',
+        'claude-haiku-4-5-20251001': 'claude-haiku-4.5',
+        'claude-opus-4-8': 'claude-sonnet-4.6'
+      },
+      { kiroDirect: true }
+    )
+    expect(parsed.allowedModels).toEqual([
+      'claude-haiku-4-5',
+      'claude-haiku-4-5-thinking',
+      'claude-opus-4-5',
+      'claude-opus-4-5-thinking',
+      'claude-sonnet-4-5',
+      'claude-sonnet-4-5-thinking',
+      'claude-sonnet-4-thinking',
+      'claude-haiku-4-5-20251001'
+    ])
+    expect(parsed.modelMappings).toEqual([{ from: 'claude-opus-4-8', to: 'claude-sonnet-4.6' }])
+
+    const remapped = splitModelMappingObject(
+      { 'claude-opus-4-5': 'claude-sonnet-4.6' },
+      { kiroDirect: true }
+    )
+    expect(remapped.allowedModels).toEqual([])
+    expect(remapped.modelMappings).toEqual([{ from: 'claude-opus-4-5', to: 'claude-sonnet-4.6' }])
+  })
+
+  it('kiro 后端折不出来的写法差异仍留在映射', () => {
+    const parsed = splitModelMappingObject(
+      {
+        'claude-3-7-sonnet': 'claude-3.7-sonnet',
+        'gpt-5-6-sol': 'gpt-5.6-sol',
+        'claude-opus-4-6': 'claude-opus-4.6-thinking'
+      },
+      { kiroDirect: true }
+    )
+    expect(parsed.allowedModels).toEqual([])
+    expect(parsed.modelMappings).toEqual([
+      { from: 'claude-3-7-sonnet', to: 'claude-3.7-sonnet' },
+      { from: 'gpt-5-6-sol', to: 'gpt-5.6-sol' },
+      { from: 'claude-opus-4-6', to: 'claude-opus-4.6-thinking' }
+    ])
+  })
+
+  it('kiro 同步白名单只在后端折不出来时写上游 ID，往返不变', () => {
+    const options = {
+      kiroDirect: true,
+      kiroUpstreamIDs: {
+        'claude-3-7-sonnet': 'claude-3.7-sonnet',
+        'claude-opus-4-9': 'claude-opus-4.9'
+      }
+    }
+    const mapping = buildModelMappingObject(
+      'combined',
+      ['claude-3-7-sonnet', 'claude-opus-4-9'],
+      [],
+      options
+    )
+    expect(mapping).toEqual({
+      'claude-3-7-sonnet': 'claude-3.7-sonnet',
+      'claude-opus-4-9': 'claude-opus-4-9'
+    })
+
+    const parsed = splitModelMappingObject(mapping, { kiroDirect: true })
+    expect(parsed.allowedModels).toEqual(['claude-opus-4-9'])
+    expect(
+      buildModelMappingObject('combined', parsed.allowedModels, parsed.modelMappings, { kiroDirect: true })
+    ).toEqual(mapping)
+  })
+
+  it('kiro 同步只追加还没有的 from，目标用上游 ID', () => {
+    const applied = appendKiroSyncedMappings(
+      [{ from: 'claude-opus-4-8', to: 'claude-sonnet-4.6' }],
+      ['claude-opus-4-8', 'claude-opus-4-9', 'claude-opus-4-9-thinking'],
+      {
+        'claude-opus-4-9': 'claude-opus-4.9',
+        'claude-opus-4-9-thinking': 'claude-opus-4.9'
+      }
+    )
+
+    expect(applied.added).toBe(2)
+    expect(applied.rows).toEqual([
+      { from: 'claude-opus-4-8', to: 'claude-sonnet-4.6' },
+      { from: 'claude-opus-4-9', to: 'claude-opus-4.9' },
+      { from: 'claude-opus-4-9-thinking', to: 'claude-opus-4.9' }
+    ])
+  })
+
+  it('combined mode retains a mapping when a whitelist entry has the same source', () => {
+    expect(buildModelMappingObject('combined', ['gpt-latest'], [{ from: 'gpt-latest', to: 'deepseek-chat' }])).toEqual({
+      'gpt-latest': 'deepseek-chat'
+    })
+  })
+
+  it('split mapping keeps only identity entries in the whitelist after reopening', () => {
+    expect(splitModelMappingObject({ 'gpt-latest': 'deepseek-chat', 'gpt-5.4': 'gpt-5.4' })).toEqual({
+      allowedModels: ['gpt-5.4'],
+      modelMappings: [{ from: 'gpt-latest', to: 'deepseek-chat' }]
     })
   })
 

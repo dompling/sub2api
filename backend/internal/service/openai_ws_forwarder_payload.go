@@ -222,28 +222,49 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 }
 
 func setOpenAIWSTurnMetadata(payload map[string]any, turnMetadata string) {
-	if len(payload) == 0 {
+	setOpenAIWSClientMetadataValue(payload, openAIWSTurnMetadataHeader, strings.TrimSpace(turnMetadata))
+}
+
+// setOpenAIWSResponsesLiteMetadata 把 HTTP 入站的 Lite 请求头转成 WS 协议的
+// client_metadata 标记。OAuth 账号映射到 gpt-5.5 时与 HTTP 出站
+// （applyMappedGPT55LiteCompatibility）一致，不发 Lite 标记。
+func setOpenAIWSResponsesLiteMetadata(payload map[string]any, account *Account) {
+	if len(payload) == 0 || account == nil {
 		return
 	}
-	metadata := strings.TrimSpace(turnMetadata)
-	if metadata == "" {
+	if account.IsOpenAIOAuthLike() && strings.TrimSpace(openAIWSPayloadString(payload, "model")) == "gpt-5.5" {
+		return
+	}
+	// payload 是 reqBody 的浅拷贝：先复制 client_metadata，避免标记写回 reqBody。
+	if existing, ok := payload["client_metadata"].(map[string]any); ok {
+		next := make(map[string]any, len(existing)+1)
+		for k, v := range existing {
+			next[k] = v
+		}
+		payload["client_metadata"] = next
+	}
+	setOpenAIWSClientMetadataValue(payload, responsesLiteWSMetadataKey, "true")
+}
+
+func setOpenAIWSClientMetadataValue(payload map[string]any, key, value string) {
+	if len(payload) == 0 || value == "" {
 		return
 	}
 
 	switch existing := payload["client_metadata"].(type) {
 	case map[string]any:
-		existing[openAIWSTurnMetadataHeader] = metadata
+		existing[key] = value
 		payload["client_metadata"] = existing
 	case map[string]string:
 		next := make(map[string]any, len(existing)+1)
 		for k, v := range existing {
 			next[k] = v
 		}
-		next[openAIWSTurnMetadataHeader] = metadata
+		next[key] = value
 		payload["client_metadata"] = next
 	default:
 		payload["client_metadata"] = map[string]any{
-			openAIWSTurnMetadataHeader: metadata,
+			key: value,
 		}
 	}
 }
@@ -379,6 +400,48 @@ func setPreviousResponseIDToRawPayload(payload []byte, previousResponseID string
 		return nil, marshalErr
 	}
 	return rebuilt, nil
+}
+
+type openAIWSContextWindowBoundary struct {
+	WindowID                  string
+	Changed                   bool
+	PreviousResponseIDRemoved bool
+}
+
+func openAIWSPayloadCodexWindowID(payload []byte) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	if windowID := strings.TrimSpace(gjson.GetBytes(payload, "client_metadata.x-codex-window-id").String()); windowID != "" {
+		return windowID
+	}
+	turnMetadata := strings.TrimSpace(gjson.GetBytes(payload, "client_metadata.x-codex-turn-metadata").String())
+	if turnMetadata == "" {
+		return ""
+	}
+	return strings.TrimSpace(gjson.Get(turnMetadata, "window_id").String())
+}
+
+// normalizeOpenAIWSContextWindowBoundary breaks a Responses continuation chain
+// when Codex moves to a new local context window. WebSocket response.create can
+// still carry the previous window's previous_response_id after new_context,
+// while HTTP starts the new window without that continuation anchor.
+func normalizeOpenAIWSContextWindowBoundary(
+	payload []byte,
+	previousWindowID string,
+) ([]byte, openAIWSContextWindowBoundary, error) {
+	currentWindowID := openAIWSPayloadCodexWindowID(payload)
+	boundary := openAIWSContextWindowBoundary{WindowID: currentWindowID}
+	if previousWindowID == "" || currentWindowID == "" || currentWindowID == previousWindowID {
+		return payload, boundary, nil
+	}
+	boundary.Changed = true
+	updated, removed, err := dropPreviousResponseIDFromRawPayload(payload)
+	if err != nil {
+		return payload, boundary, err
+	}
+	boundary.PreviousResponseIDRemoved = removed
+	return updated, boundary, nil
 }
 
 func shouldInferIngressFunctionCallOutputPreviousResponseID(

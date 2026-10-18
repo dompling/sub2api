@@ -12,34 +12,33 @@ func TestProvideAccountUsageServicePreservesKiroCodeBuddyAndAgentIdentityDepende
 	kiro := &KiroTokenProvider{}
 	codeBuddy := &CodeBuddyQuotaFetcher{}
 	gateway := &OpenAIGatewayService{}
-	adobeProvider := NewAdobeTokenProvider(nil, NewOAuthRefreshAPI(nil, nil))
+	leonardo := &LeonardoTokenProvider{}
 
 	svc := ProvideAccountUsageService(
 		nil, nil, nil, nil, nil, nil, nil, codeBuddy, nil,
-		NewUsageCache(), nil, nil, gateway, kiro, adobeProvider,
+		NewUsageCache(), nil, nil, gateway, kiro, leonardo,
 	)
 
 	require.Equal(t, kiro, svc.kiroTokenProvider)
 	require.Same(t, codeBuddy, svc.codebuddyQuotaFetcher)
+	require.Same(t, leonardo, svc.sharedLeonardoTokenProvider)
 	require.Equal(t, gateway, svc.agentIdentityWS)
-	require.Same(t, adobeProvider, svc.adobeTokenProvider)
 }
 
 func TestProvideAccountTestServicePreservesKiroCodeBuddyAndAgentIdentityDependencies(t *testing.T) {
 	kiro := &KiroTokenProvider{}
 	codeBuddy := &CodeBuddyTokenProvider{}
 	gateway := &OpenAIGatewayService{}
-
-	adobeProvider := &AdobeTokenProvider{}
+	leonardo := &LeonardoTokenProvider{}
 
 	svc := ProvideAccountTestService(
-		nil, nil, nil, kiro, nil, codeBuddy, nil, nil, nil, nil, gateway, nil, nil, adobeProvider,
+		nil, nil, nil, kiro, nil, codeBuddy, leonardo, nil, nil, nil, nil, gateway, nil, nil,
 	)
 
 	require.Equal(t, kiro, svc.kiroTokenProvider)
 	require.Same(t, codeBuddy, svc.codeBuddyTokenProvider)
+	require.Same(t, leonardo, svc.leonardoTokenProvider)
 	require.Equal(t, gateway, svc.agentIdentityWS)
-	require.Same(t, adobeProvider, svc.adobeTokenProvider)
 }
 
 func TestProvideOpenAIGatewayServicePreservesCodeBuddyTokenProvider(t *testing.T) {

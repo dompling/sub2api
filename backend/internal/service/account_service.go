@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,16 +23,17 @@ const AccountPrivacyModeUnsetFilter = "__unset__"
 // accounts. Candidate platforms are supplied by TokenRefreshService's refresher
 // registry so repository eligibility cannot drift from registered providers.
 type OAuthRefreshPageOptions struct {
-	Platforms           []string
-	AfterID             int64
-	Limit               int
-	ActiveOnly          bool
-	IncludeSetupToken   bool
-	RequireRefreshToken bool
-	// CookieCredentialPlatforms 列出以浏览器 cookie 作为长期凭据的平台（如 Adobe）：
-	// RequireRefreshToken 为 true 时，这些平台的账号改为要求非空 cookie 而非 refresh_token。
+	Platforms            []string
+	AfterID              int64
+	Limit                int
+	ActiveOnly           bool
+	IncludeSetupToken    bool
+	RequireRefreshToken  bool
+	ExcludeRetryCooldown bool
+	// CookieCredentialPlatforms 列出以 cookie 作为长期凭据的平台（无
+	// refresh_token）。RequireRefreshToken 时，这些平台的候选条件改为
+	// cookie 非空，否则后台永远刷不到它们。
 	CookieCredentialPlatforms []string
-	ExcludeRetryCooldown      bool
 }
 
 // OAuthRefreshCandidatePage keeps cursor metadata from the raw SQL ID page.
@@ -226,6 +228,9 @@ func NewAccountService(accountRepo AccountRepository, groupRepo GroupRepository)
 
 // Create 创建账号
 func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (*Account, error) {
+	if req.Platform == PlatformTypeSafe && req.Type != AccountTypeAPIKey {
+		return nil, errors.New("typesafe accounts only support apikey credentials")
+	}
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
 		if err := s.validateGroupIDsExist(ctx, req.GroupIDs); err != nil {
@@ -518,13 +523,18 @@ func (s *AccountService) TestCredentials(ctx context.Context, id int64) error {
 	case PlatformGrok:
 		// Grok OAuth credentials are validated via token exchange/refresh and request-path probes.
 		return nil
-	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
-		// 国产 OpenAI 兼容供应商与 OpenCode：凭证为 API Key，实际可用性经余额/额度探测与转发路径验证。
+	case PlatformTypeSafe:
+		// TypeSafe credentials are API keys; inference failures drive health and cooldown state.
 		return nil
 	case PlatformCodeBuddy:
 		// CodeBuddy OAuth credentials are validated via token exchange/refresh and request-path probes.
 		return nil
 	default:
+		if IsMultiProtocolAPIKeyProvider(account.Platform) {
+			// 多协议 API Key 供应商（国产厂商与聚合平台）：凭证为 API Key，实际可用性
+			// 经余额/额度探测与转发路径验证。
+			return nil
+		}
 		return fmt.Errorf("unsupported platform: %s", account.Platform)
 	}
 }

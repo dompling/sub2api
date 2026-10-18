@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,29 @@ func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, DefaultModelsListReadMaxBytes, cfg.Gateway.ModelsListReadMaxBytes)
+}
+
+func TestLoadDefaultMinOutputTokens(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 128, cfg.Gateway.MinOutputTokens)
+}
+
+func TestLoadMinOutputTokensFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_MIN_OUTPUT_TOKENS", "16")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 16, cfg.Gateway.MinOutputTokens)
+}
+
+func TestValidateMinOutputTokensMinimum(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	cfg.Gateway.MinOutputTokens = 15
+	require.EqualError(t, cfg.Validate(), "gateway.min_output_tokens must be at least 16")
 }
 
 func TestLoadTimezonePrecedence(t *testing.T) {
@@ -77,6 +101,15 @@ func TestLoadServerTimingConfig(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, cfg.Server.EnableServerTiming)
 	})
+}
+
+func TestLoadSimpleModeKeyRateLimitEnabledFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED", "true")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.SimpleModeKeyRateLimitEnabled)
 }
 
 func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
@@ -662,6 +695,19 @@ func TestLoadImageNonstreamKeepaliveFromEnv(t *testing.T) {
 	require.Equal(t, 15, cfg.Gateway.ImageNonstreamKeepaliveInterval)
 }
 
+func TestLoadLeonardoUsageTokensPerCredit(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 34.0, cfg.Gateway.LeonardoUsageTokensPerCredit)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_LEONARDO_USAGE_TOKENS_PER_CREDIT", "0")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Zero(t, cfg.Gateway.LeonardoUsageTokensPerCredit)
+}
+
 func TestLoadOpenAIWSStickyTTLCompatibility(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_WS_STICKY_RESPONSE_ID_TTL_SECONDS", "0")
@@ -822,6 +868,7 @@ func TestLoadDefaultSecurityToggles(t *testing.T) {
 
 	wantHosts := []string{
 		"api.kimi.com",
+		"api.kimi.ai",
 		"api.moonshot.ai",
 		"api.moonshot.cn",
 	}
@@ -833,6 +880,19 @@ func TestLoadDefaultSecurityToggles(t *testing.T) {
 		if _, ok := hostSet[want]; !ok {
 			t.Fatalf("URLAllowlist.UpstreamHosts missing %q; got %v", want, cfg.Security.URLAllowlist.UpstreamHosts)
 		}
+	}
+	opts := urlvalidator.ValidationOptions{
+		AllowedHosts:     cfg.Security.URLAllowlist.UpstreamHosts,
+		RequireAllowlist: true,
+		AllowPrivate:     cfg.Security.URLAllowlist.AllowPrivateHosts,
+	}
+	for _, host := range []string{"api.kimi.com", "api.kimi.ai"} {
+		target := "https://" + host + "/coding/v1/usages"
+		normalized, err := urlvalidator.ValidateHTTPSURL(target, opts)
+		require.NoError(t, err)
+		require.Equal(t, target, normalized)
+		_, err = urlvalidator.ValidateHTTPSURL("https://"+host+".attacker.example/coding/v1/usages", opts)
+		require.Error(t, err)
 	}
 }
 
@@ -1966,6 +2026,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "gateway.image_nonstream_keepalive_interval must be non-negative",
 		},
 		{
+			name:    "gateway leonardo usage tokens per credit negative",
+			mutate:  func(c *Config) { c.Gateway.LeonardoUsageTokensPerCredit = -1 },
+			wantErr: "gateway.leonardo_usage_tokens_per_credit must be non-negative",
+		},
+		{
 			name:    "gateway image stream data interval range",
 			mutate:  func(c *Config) { c.Gateway.ImageStreamDataIntervalTimeout = 30 },
 			wantErr: "gateway.image_stream_data_interval_timeout",
@@ -2194,6 +2259,14 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 		require.Equal(t, 7200, cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds)
 	})
 
+	t.Run("ingress_mode_default 接受 http_bridge 与 ws_bridge", func(t *testing.T) {
+		for _, mode := range []string{"http_bridge", "ws_bridge"} {
+			cfg := buildValid(t)
+			cfg.Gateway.OpenAIWS.IngressModeDefault = mode
+			require.NoError(t, cfg.Validate(), mode)
+		}
+	})
+
 	cases := []struct {
 		name    string
 		mutate  func(*Config)
@@ -2287,7 +2360,7 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.store_disabled_conn_mode",
 		},
 		{
-			name:    "ingress_mode_default 必须为 off|ctx_pool|passthrough|http_bridge",
+			name:    "ingress_mode_default 必须为 off|ctx_pool|passthrough|http_bridge|ws_bridge",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.IngressModeDefault = "invalid" },
 			wantErr: "gateway.openai_ws.ingress_mode_default",
 		},
@@ -2628,5 +2701,44 @@ func TestLoad_DefaultGatewayImageStreamConfig(t *testing.T) {
 	}
 	if cfg.Gateway.ImageStreamDataIntervalTimeout <= cfg.Gateway.StreamDataIntervalTimeout {
 		t.Fatalf("image stream timeout = %d, want greater than ordinary stream timeout %d", cfg.Gateway.ImageStreamDataIntervalTimeout, cfg.Gateway.StreamDataIntervalTimeout)
+	}
+}
+
+func TestLoadSimpleModeAutoCreateDefaultGroups(t *testing.T) {
+	for _, loader := range []struct {
+		name string
+		load func() (*Config, error)
+	}{{"Load", Load}, {"LoadForBootstrap", LoadForBootstrap}} {
+		t.Run(loader.name, func(t *testing.T) {
+			for _, tt := range []struct {
+				name  string
+				yaml  string
+				env   string
+				unset bool
+				want  bool
+			}{
+				{name: "unset env uses application default", unset: true, want: true},
+				{name: "empty env uses application default", want: true},
+				{name: "unset env preserves yaml false", unset: true, yaml: "simple_mode:\n  auto_create_default_groups: false\n", want: false},
+				{name: "empty env preserves yaml false", yaml: "simple_mode:\n  auto_create_default_groups: false\n", want: false},
+				{name: "env false overrides yaml true", yaml: "simple_mode:\n  auto_create_default_groups: true\n", env: "false", want: false},
+				{name: "env false without yaml", env: "false", want: false},
+				{name: "env true overrides yaml false", yaml: "simple_mode:\n  auto_create_default_groups: false\n", env: "true", want: true},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					resetViperWithJWTSecret(t)
+					t.Setenv("SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS", tt.env)
+					if tt.unset {
+						require.NoError(t, os.Unsetenv("SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS"))
+					}
+					path := filepath.Join(t.TempDir(), "config.yaml")
+					require.NoError(t, os.WriteFile(path, []byte("run_mode: simple\n"+tt.yaml), 0o600))
+					t.Setenv("CONFIG_FILE", path)
+					cfg, err := loader.load()
+					require.NoError(t, err)
+					require.Equal(t, tt.want, cfg.SimpleMode.AutoCreateDefaultGroups)
+				})
+			}
+		})
 	}
 }
