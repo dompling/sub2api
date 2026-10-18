@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -244,16 +245,20 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 		}
 		applyGrokCacheHeaders(upstreamReq.Header, grokCacheIdentity)
 	}
-	// codebuddy 上游要求携带官方 WorkBuddy 客户端的会话/身份头，
+	// CodeBuddy 上游要求携带官方 WorkBuddy 客户端的会话/身份头，
 	// 否则网关无法识别为合法会话，会走最严格的内容安全路径把无害输入也判为敏感。
 	// 实测：本地 curl 带全套头时 1+1 正常返回，sub2api 缺头时被上游拦截。
 	if account.Platform == PlatformCodeBuddy {
-		cid := codebuddy.GenerateRequestUUID()
+		cid := resolveCodeBuddyConversationID(c, body)
 		upstreamReq.Header.Set("X-Conversation-ID", cid)
 		upstreamReq.Header.Set("X-Conversation-Request-ID", codebuddy.GenerateRequestUUID())
 		upstreamReq.Header.Set("X-Conversation-Message-ID", codebuddy.GenerateRequestUUID())
 		upstreamReq.Header.Set("X-Request-ID", codebuddy.GenerateRequestUUID())
-		upstreamReq.Header.Set("X-Agent-Intent", "craft")
+		agentIntent := strings.TrimSpace(c.GetHeader("X-Agent-Intent"))
+		if agentIntent == "" {
+			agentIntent = "craft"
+		}
+		upstreamReq.Header.Set("X-Agent-Intent", agentIntent)
 		upstreamReq.Header.Set("X-Agent-Purpose", "conversation_topic")
 		upstreamReq.Header.Set("X-IDE-Type", "WorkBuddy")
 		upstreamReq.Header.Set("X-IDE-Name", "WorkBuddy")
@@ -300,6 +305,22 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
 	return resp, nil
+}
+
+// resolveCodeBuddyConversationID keeps the upstream conversation identity stable
+// across turns. Explicit client session signals always win. When a client omits
+// them, hash only a conversation-anchored request prefix into a UUID so later
+// turns carrying the same history reuse the ID without exposing prompt content in
+// an HTTP header. Requests without a usable content anchor remain isolated with a
+// random UUID instead of sharing a model-wide identity.
+func resolveCodeBuddyConversationID(c *gin.Context, body []byte) string {
+	if sessionID := sanitizeSessionID(explicitOpenAIRequestSessionID(c, body)); sessionID != "" {
+		return sessionID
+	}
+	if seed := deriveOpenAIAnchoredContentSessionSeed(body); seed != "" {
+		return uuid.NewSHA1(uuid.NameSpaceURL, []byte("codebuddy-conversation:"+seed)).String()
+	}
+	return codebuddy.GenerateRequestUUID()
 }
 
 // ccStreamScanState 是 scanCCStream 返回的读取状态快照。
