@@ -1,4 +1,5 @@
 import { getProviderProfile } from '@/constants/platformCatalog'
+import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 
 // =====================
 // 模型列表（硬编码，与 new-api 一致）
@@ -12,7 +13,7 @@ const openaiModels = [
 	// GPT-5.6 系列
   'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
   // GPT-6 系列
-  'gpt-6', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna',
+  'gpt-6', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna',
   // GPT-5.5 系列
   'gpt-5.5',
   // GPT-5.4 系列
@@ -60,13 +61,21 @@ const geminiModels = [
   // Keep in sync with backend curated Gemini lists.
   // This list is intentionally conservative (models commonly available across OAuth/API key).
   'gemini-3.1-flash-image',
-  'gemini-2.5-flash-image',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-3.5-flash',
+  'gemini-3.1-flash-image-preview',
+  'gemini-3.1-flash-lite-image',
+  'gemini-3-pro-image',
+  'gemini-3-pro-image-preview',
+  'gemini-3-flash',
   'gemini-3-flash-preview',
-  'gemini-3-pro-preview',
+  'gemini-3.1-pro-preview',
+  'gemini-3.1-pro-preview-customtools',
+  'gemini-3.1-flash-lite',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash',
   'gemini-4-argon'
 ]
 
@@ -140,6 +149,19 @@ const leonardoModels = [
   'gpt-image-2.5-sunburst',
 ]
 
+// Fish Audio 对外模型。与其他平台的目录分开维护。
+const fishModels = [
+  'gpt-image-2',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+]
+
+const fishPresetMappings = [
+  { label: 'GPT Image 2', from: 'gpt-image-2', to: 'gpt-image-2', color: 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400' },
+  { label: 'GPT Image 2.5 Flare', from: 'gpt-image-2.5-flare', to: 'gpt-image-2.5-flare', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-400' },
+  { label: 'GPT Image 2.5 Sunburst', from: 'gpt-image-2.5-sunburst', to: 'gpt-image-2.5-sunburst', color: 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400' },
+]
+
 // Leonardo 预设映射：恒等（Cookie 号出图时后端再换成上游 slug，如 openai/gpt-image-2.5-flare）。
 const leonardoPresetMappings = [
   { label: 'GPT Image 2', from: 'gpt-image-2', to: 'gpt-image-2', color: 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400' },
@@ -151,6 +173,7 @@ const kiroModels = [
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna',
+  'kimi-k3',
   'codex-auto-review',
   'claude-opus-4-8',
   'claude-opus-4-8-thinking',
@@ -173,7 +196,9 @@ const kiroModels = [
   'claude-sonnet-4-5-20250929',
   'claude-sonnet-4-5-20250929-thinking',
   'claude-haiku-4-5-20251001',
-  'claude-haiku-4-5-20251001-thinking'
+  'claude-haiku-4-5-20251001-thinking',
+  'claude-haiku-5-5',
+  'claude-haiku-5-5-thinking'
 ]
 
 // 智谱 GLM
@@ -337,10 +362,11 @@ const perplexityModels = [
 ]
 
 // 所有模型（去重）
-const allModelsList: string[] = [
+const allModelsList: string[] = Array.from(new Set([
   ...openaiModels,
   ...claudeModels,
   ...geminiModels,
+  ...antigravityModels,
   ...zhipuModels,
   ...qwenModels,
   ...deepseekModels,
@@ -356,7 +382,7 @@ const allModelsList: string[] = [
   ...sparkModels,
   ...hunyuanModels,
   ...perplexityModels
-]
+]))
 
 // 转换为下拉选项格式
 export const allModels = allModelsList.map(m => ({ value: m, label: m }))
@@ -395,6 +421,7 @@ const openaiPresetMappings = [
   { label: 'GPT-5.2', from: 'gpt-5.2', to: 'gpt-5.2', color: 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400' },
   { label: 'GPT-6', from: 'gpt-6', to: 'gpt-6', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
   { label: 'GPT-5.6', from: 'gpt-5.6', to: 'gpt-5.6', color: 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400' },
+  { label: 'GPT-6.1 Terra', from: 'gpt-6.1-terra', to: 'gpt-6.1-terra', color: 'bg-lime-100 text-lime-700 hover:bg-lime-200 dark:bg-lime-900/30 dark:text-lime-400' },
   { label: 'GPT-6.1 Sol', from: 'gpt-6.1-sol', to: 'gpt-6.1-sol', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-400' },
   { label: 'GPT-6 Sol', from: 'gpt-6-sol', to: 'gpt-6-sol', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-400' },
   { label: 'GPT-5.6 Sol', from: 'gpt-5.6-sol', to: 'gpt-5.6-sol', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-400' },
@@ -496,6 +523,7 @@ const kiroPresetMappings = [
   { label: 'GPT-5.6 Sol', from: 'gpt-5.6-sol', to: 'gpt-5.6-sol', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-300' },
   { label: 'GPT-5.6 Terra', from: 'gpt-5.6-terra', to: 'gpt-5.6-terra', color: 'bg-lime-100 text-lime-700 hover:bg-lime-200 dark:bg-lime-900/30 dark:text-lime-300' },
   { label: 'GPT-5.6 Luna', from: 'gpt-5.6-luna', to: 'gpt-5.6-luna', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-300' },
+  { label: 'Kimi K3', from: 'kimi-k3', to: 'kimi-k3', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-300' },
   { label: 'Codex Auto Review→Luna', from: 'codex-auto-review', to: 'gpt-5.6-luna', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-300' },
   { label: 'Opus 4.8', from: 'claude-opus-4-8', to: 'claude-opus-4.8', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Opus 4.8 Thinking', from: 'claude-opus-4-8-thinking', to: 'claude-opus-4.8', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
@@ -518,7 +546,9 @@ const kiroPresetMappings = [
   { label: 'Sonnet 4.5', from: 'claude-sonnet-4-5-20250929', to: 'claude-sonnet-4.5', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300' },
   { label: 'Sonnet 4.5 Thinking', from: 'claude-sonnet-4-5-20250929-thinking', to: 'claude-sonnet-4.5', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300' },
   { label: 'Haiku 4.5', from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300' },
-  { label: 'Haiku 4.5 Thinking', from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300' }
+  { label: 'Haiku 4.5 Thinking', from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300' },
+  { label: 'Haiku 5.5', from: 'claude-haiku-5-5', to: 'claude-haiku-5.5', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300' },
+  { label: 'Haiku 5.5 Thinking', from: 'claude-haiku-5-5-thinking', to: 'claude-haiku-5.5', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300' }
 ]
 
 // Bedrock 预设映射（与后端 DefaultBedrockModelMapping 保持一致）
@@ -596,6 +626,7 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'antigravity': return antigravityModels
     case 'kiro': return kiroModels
     case 'leonardo': return leonardoModels
+    case 'fish': return fishModels
     case 'zhipu': return zhipuModels
     case 'qwen': return qwenModels
     case 'deepseek': return deepseekModels
@@ -642,8 +673,21 @@ export function getPresetMappingsByPlatform(platform: string) {
   if (platform === 'antigravity') return antigravityPresetMappings
   if (platform === 'kiro') return kiroPresetMappings
   if (platform === 'leonardo') return leonardoPresetMappings
+  if (platform === 'fish') return fishPresetMappings
   if (platform === 'bedrock') return bedrockPresetMappings
   return anthropicPresetMappings
+}
+
+// BPS OAuth 账号只服务 BPS 模型：快速添加只给默认 BPS 模型（from = to），颜色沿用 OpenAI 预设。
+export function getBPSPresetMappings() {
+  return DEFAULT_EXCEL_BPS_MODELS.map(model =>
+    openaiPresetMappings.find(preset => preset.from === model && preset.to === model) ?? {
+      label: model,
+      from: model,
+      to: model,
+      color: 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300'
+    }
+  )
 }
 
 // =====================

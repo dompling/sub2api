@@ -170,7 +170,7 @@ func TestUpdateUserPlatformQuotas_AllUnlimitedClearsRows(t *testing.T) {
 }
 
 func TestUpdateUserPlatformQuotas_CodeBuddyAndNewUpstreamPlatforms(t *testing.T) {
-	for _, platform := range []string{"codebuddy", "adobe", "minimax", "opencode_go"} {
+	for _, platform := range []string{"codebuddy", "leonardo", "fish", "minimax", "opencode_go"} {
 		t.Run(platform, func(t *testing.T) {
 			repo := &upsertCapturingQuotaRepo{}
 			h := buildTestHandler(repo, &billingCacheStub{})

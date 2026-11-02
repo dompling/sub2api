@@ -30,6 +30,7 @@ import type {
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
   GrokMediaEligibilityState,
+  GrokModelDiagnostics,
   OpenCodeGoUsageSettings,
   OpenCodeGoUsageState
 } from '@/types'
@@ -335,7 +336,7 @@ export async function refreshCredentials(id: number): Promise<RefreshCredentials
 export async function applyOAuthCredentials(
   id: number,
   payload: {
-    type: 'oauth' | 'setup-token'
+    type: 'oauth' | 'setup-token' | 'bps-oauth'
     credentials: Record<string, unknown>
     extra?: Record<string, unknown>
   }
@@ -611,6 +612,8 @@ export interface SyncUpstreamModelsResult {
   models: string[]
   metadata?: Record<string, UpstreamModelMetadata>
   warnings?: UpstreamModelSyncWarning[]
+  discovery_source?: 'upstream' | 'configured_fallback'
+  grok_model_diagnostics?: GrokModelDiagnostics
 }
 
 export interface UpstreamModelSyncWarning {

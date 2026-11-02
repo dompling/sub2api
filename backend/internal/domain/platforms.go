@@ -46,11 +46,12 @@ var platformList = []PlatformSpec{
 	{ID: PlatformDeepseek, DisplayName: "DeepSeek", Gateway: PlatformGatewayOpenAI, CNProvider: true, LiteLLMProvider: "deepseek"},
 	{ID: PlatformMiniMax, DisplayName: "MiniMax", Gateway: PlatformGatewayOpenAI, CNProvider: true, LiteLLMProvider: "minimax"},
 	{ID: PlatformOpenCodeGo, DisplayName: "OpenCode", Gateway: PlatformGatewayOpenAI, LiteLLMProvider: "opencode-go"},
-	{ID: PlatformCodeBuddy, DisplayName: "CodeBuddy / WorkBuddy", Gateway: PlatformGatewayOpenAI},
+	{ID: PlatformCodeBuddy, DisplayName: "CodeBuddy/WorkBuddy", Gateway: PlatformGatewayOpenAI},
 	{ID: PlatformTypeSafe, DisplayName: "TypeSafe / Jev", Gateway: PlatformGatewayAnthropic, LiteLLMProvider: "typesafe"},
 	{ID: PlatformCommandCode, DisplayName: "Command Code", Gateway: PlatformGatewayOpenAI},
 	{ID: PlatformCline, DisplayName: "Cline", Gateway: PlatformGatewayOpenAI},
 	{ID: PlatformLeonardo, DisplayName: "Leonardo", Gateway: PlatformGatewayAnthropic},
+	{ID: PlatformFish, DisplayName: "Fish Audio", Gateway: PlatformGatewayOpenAI},
 }
 
 var platformIndex = func() map[string]int {

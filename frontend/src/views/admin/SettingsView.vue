@@ -46,8 +46,10 @@
 
         <!-- Tab: Security — Admin API Key -->
         <div v-show="activeTab === 'security'" class="space-y-6">
-          <!-- Admin API Key Settings -->
-          <div class="card">
+          <AdminAccessKeysSettings />
+          <!-- 已有全权密钥只提供轮换和删除入口。 -->
+          <details v-if="adminApiKeyExists" class="card">
+            <summary class="cursor-pointer px-6 py-4 font-medium">{{ t("adminAccessKeys.legacy") }}</summary>
             <div
               class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
             >
@@ -84,48 +86,6 @@
                   class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
                 ></div>
                 {{ t("common.loading") }}
-              </div>
-
-              <!-- No Key Configured -->
-              <div
-                v-else-if="!adminApiKeyExists"
-                class="flex items-center justify-between"
-              >
-                <span class="text-gray-500 dark:text-gray-400">
-                  {{ t("admin.settings.adminApiKey.notConfigured") }}
-                </span>
-                <button
-                  type="button"
-                  @click="createAdminApiKey"
-                  :disabled="adminApiKeyOperating"
-                  class="btn btn-primary btn-sm"
-                >
-                  <svg
-                    v-if="adminApiKeyOperating"
-                    class="mr-1 h-4 w-4 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      class="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="4"
-                    ></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  {{
-                    adminApiKeyOperating
-                      ? t("admin.settings.adminApiKey.creating")
-                      : t("admin.settings.adminApiKey.create")
-                  }}
-                </button>
               </div>
 
               <!-- Key Exists -->
@@ -197,7 +157,7 @@
                 </div>
               </div>
             </div>
-          </div>
+          </details>
         </div>
         <!-- /Tab: Security — Admin API Key -->
 
@@ -5363,6 +5323,52 @@
                 </p>
               </div>
 
+              <!-- Fish 原生号动态尺寸规划：最大裁剪 -->
+              <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
+                <label
+                  for="fish-image-max-crop-pixels"
+                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.gatewayForwarding.fishImageMaxCropPixels") }}
+                </label>
+                <input
+                  id="fish-image-max-crop-pixels"
+                  v-model.number="form.fish_image_max_crop_pixels"
+                  type="number"
+                  min="0"
+                  max="64"
+                  step="1"
+                  data-testid="fish-image-max-crop-pixels"
+                  class="input mt-2 w-40 font-mono text-sm"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.fishImageMaxCropPixelsHint") }}
+                </p>
+              </div>
+
+              <!-- Fish 原生号动态尺寸规划：最大放大倍数 -->
+              <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
+                <label
+                  for="fish-image-max-upscale-factor"
+                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.gatewayForwarding.fishImageMaxUpscaleFactor") }}
+                </label>
+                <input
+                  id="fish-image-max-upscale-factor"
+                  v-model.number="form.fish_image_max_upscale_factor"
+                  type="number"
+                  min="1"
+                  max="3"
+                  step="0.1"
+                  data-testid="fish-image-max-upscale-factor"
+                  class="input mt-2 w-40 font-mono text-sm"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.fishImageMaxUpscaleFactorHint") }}
+                </p>
+              </div>
+
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
@@ -9182,6 +9188,7 @@ import {
   isStepUpBlocked,
   stepUpBlockReason,
 } from "@/composables/useStepUp";
+import AdminAccessKeysSettings from "@/components/admin/settings/AdminAccessKeysSettings.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
@@ -10229,6 +10236,9 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   claude_code_client_version_synced: "",
 	claude_code_version_auto_sync_enabled: true,
+  // fish 原生号动态尺寸规划阈值
+  fish_image_max_crop_pixels: 4,
+  fish_image_max_upscale_factor: 2,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -11518,6 +11528,25 @@ const siteBillingModeHint = computed(() =>
   t(`admin.settings.features.siteBillingMode.hints.${SITE_BILLING_MODE_I18N_KEYS[siteBillingMode.value]}`),
 );
 
+// fish 原生号动态尺寸规划阈值的提交钳制（与后端校验一致：crop 0-64、factor 1-3）。
+// 清空输入框（v-model.number 得到 ""）回落默认 4，而不是被 Number("") 当成 0（不裁剪）。
+function clampFishImageMaxCropPixels(
+  value: number | string | null | undefined,
+): number {
+  if (value === null || value === undefined || value === "") return 4;
+  const crop = Number(value);
+  if (!Number.isFinite(crop) || crop < 0) return 4;
+  return Math.min(Math.round(crop), 64);
+}
+
+function clampFishImageMaxUpscaleFactor(
+  value: number | null | undefined,
+): number {
+  const factor = Number(value);
+  if (!Number.isFinite(factor) || factor <= 0) return 2;
+  return Math.min(Math.max(factor, 1), 3);
+}
+
 async function saveSettings() {
   saving.value = true;
   try {
@@ -11904,6 +11933,12 @@ async function saveSettings() {
       claude_code_client_version: form.claude_code_client_version?.trim() || "",
       claude_code_version_auto_sync_enabled:
          form.claude_code_version_auto_sync_enabled,
+      fish_image_max_crop_pixels: clampFishImageMaxCropPixels(
+        form.fish_image_max_crop_pixels,
+      ),
+      fish_image_max_upscale_factor: clampFishImageMaxUpscaleFactor(
+        form.fish_image_max_upscale_factor,
+      ),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
@@ -12248,15 +12283,17 @@ async function loadAdminApiKey() {
 }
 
 async function createAdminApiKey() {
+  if (!adminApiKeyExists.value) return;
   adminApiKeyOperating.value = true;
   try {
-    const result = await adminAPI.settings.regenerateAdminApiKey();
+    const result = await settingsStepUp.run(() => adminAPI.settings.regenerateAdminApiKey());
     newAdminApiKey.value = result.key;
     adminApiKeyExists.value = true;
     adminApiKeyMasked.value =
       result.key.substring(0, 10) + "..." + result.key.slice(-4);
     appStore.showSuccess(t("admin.settings.adminApiKey.keyGenerated"));
   } catch (error: unknown) {
+    if (isStepUpCancelled(error)) return;
     appStore.showError(extractApiErrorMessage(error, t("common.error")));
   } finally {
     adminApiKeyOperating.value = false;
@@ -12279,12 +12316,13 @@ async function confirmDeleteAdminApiKey() {
   showDeleteApiKeyDialog.value = false;
   adminApiKeyOperating.value = true;
   try {
-    await adminAPI.settings.deleteAdminApiKey();
+    await settingsStepUp.run(() => adminAPI.settings.deleteAdminApiKey());
     adminApiKeyExists.value = false;
     adminApiKeyMasked.value = "";
     newAdminApiKey.value = "";
     appStore.showSuccess(t("admin.settings.adminApiKey.keyDeleted"));
   } catch (error: unknown) {
+    if (isStepUpCancelled(error)) return;
     appStore.showError(extractApiErrorMessage(error, t("common.error")));
   } finally {
     adminApiKeyOperating.value = false;

@@ -287,6 +287,8 @@ export interface PublicSettings {
   service_quota_enabled: boolean
   affiliate_enabled: boolean
   allow_user_view_error_requests?: boolean
+  /** True when the deployment configures MCP_PUBLIC_URL; MCP is disabled otherwise. */
+  mcp_enabled?: boolean
 }
 
 export interface AuthResponse {
@@ -594,6 +596,7 @@ export interface Group {
   // 图片生成计费配置
   allow_image_generation: boolean
   allow_batch_image_generation: boolean
+  image_count_billing: boolean
   image_rate_independent: boolean
   image_rate_multiplier: number
   batch_image_discount_multiplier: number
@@ -830,6 +833,7 @@ export interface CreateGroupRequest {
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
+  image_count_billing?: boolean
   image_rate_independent?: boolean
   image_rate_multiplier?: number
   batch_image_discount_multiplier?: number
@@ -905,6 +909,7 @@ export interface UpdateGroupRequest {
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
+  image_count_billing?: boolean
   image_rate_independent?: boolean
   image_rate_multiplier?: number
   batch_image_discount_multiplier?: number
@@ -970,7 +975,7 @@ export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigrav
  * `string & {}` 保留内置平台的字面量补全。
  */
 export type AccountPlatform = KnownAccountPlatform | (string & {})
-export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
+export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account' | 'bps-oauth'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 
@@ -1260,6 +1265,37 @@ export interface OpenCodeGoUsageSettings {
   debounce_minutes: number
 }
 
+export interface GrokCatalogScope {
+  account_id: number
+  account_type: string
+  endpoint: string
+  fingerprint: string
+}
+
+export interface GrokCatalogAttempt {
+  started_at: string
+  finished_at: string
+  status: string
+  error_code?: string
+  scope?: GrokCatalogScope
+}
+
+export interface GrokModelDiagnosticItem {
+  requested: string
+  upstream?: string
+  status: string
+}
+
+export interface GrokModelDiagnostics {
+  state: string
+  endpoint?: string
+  fetched_at?: string
+  expires_at?: string
+  models: string[]
+  last_attempt?: GrokCatalogAttempt
+  mappings: GrokModelDiagnosticItem[]
+}
+
 export interface Account {
   id: number
   name: string
@@ -1291,6 +1327,7 @@ kiro_credit_unit_price_usd?: number
     leonardo_max_quality?: string
     leonardo_max_short_edge?: number
     leonardo_max_upscale_factor?: number
+    fish_max_quality?: string
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
@@ -1422,6 +1459,8 @@ kiro_credit_unit_price_usd?: number
   parent_privacy_mode?: string
   parent_subscription_expires_at?: string
   parent_chatgpt_account_id?: string
+
+  grok_model_diagnostics?: GrokModelDiagnostics
 }
 
 // The admin account list may return this compact shape when lite=1. Detail
@@ -1573,6 +1612,12 @@ export interface AccountUsageInfo {
   kiro_runtime_state?: string | null
   kiro_runtime_reason?: string | null
   kiro_runtime_reset_at?: string | null
+
+  // Fish token 号：钱包已用/总额、每日出图窗口、套餐
+  fish_plan?: string | null
+  fish_credits?: KiroCreditProgress | null
+  fish_daily?: KiroCreditProgress | null
+  fish_reset_at?: string | null
 
   // Leonardo 积分余额快照
   leonardo_plan?: string | null

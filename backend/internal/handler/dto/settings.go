@@ -228,6 +228,8 @@ type SystemSettings struct {
 	ClaudeCodeClientVersion          string                                    `json:"claude_code_client_version"`
 	ClaudeCodeClientVersionSynced    string                                    `json:"claude_code_client_version_synced"`
 	ClaudeCodeVersionAutoSyncEnabled bool                                      `json:"claude_code_version_auto_sync_enabled"`
+	FishImageMaxCropPixels           int                                       `json:"fish_image_max_crop_pixels"`
+	FishImageMaxUpscaleFactor        float64                                   `json:"fish_image_max_upscale_factor"`
 
 	// codex_cli_only 加固
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -423,6 +425,7 @@ type PublicSettings struct {
 	GitHubOAuthEnabled                  bool                     `json:"github_oauth_enabled"`
 	GoogleOAuthEnabled                  bool                     `json:"google_oauth_enabled"`
 	BackendModeEnabled                  bool                     `json:"backend_mode_enabled"`
+	MCPEnabled                          bool                     `json:"mcp_enabled"`
 	PaymentEnabled                      bool                     `json:"payment_enabled"`
 	// PaymentBalanceDisabled mirrors the payment-config BALANCE_PAYMENT_DISABLED switch so the
 	// user shell can derive the site billing mode (recharge & subscription / recharge only /

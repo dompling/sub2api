@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 26 // v26: v25 group model_allowlist and billing/manifest fields + key-level allowed_models; invalidate snapshots from either fork.
+const apiKeyAuthSnapshotVersion = 27 // v27: merge key-level allowed_models and group image_count_billing; invalidate v26 snapshots from either fork.
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -398,6 +398,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			MonthlyLimitUSD:                 groupForSnapshot.MonthlyLimitUSD,
 			AllowImageGeneration:            groupForSnapshot.AllowImageGeneration,
 			AllowBatchImageGeneration:       groupForSnapshot.AllowBatchImageGeneration,
+			ImageCountBilling:               groupForSnapshot.ImageCountBilling,
 			ImageRateIndependent:            groupForSnapshot.ImageRateIndependent,
 			ImageRateMultiplier:             groupForSnapshot.ImageRateMultiplier,
 			ImagePrice1K:                    groupForSnapshot.ImagePrice1K,
@@ -509,6 +510,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			MonthlyLimitUSD:                 snapshot.Group.MonthlyLimitUSD,
 			AllowImageGeneration:            snapshot.Group.AllowImageGeneration,
 			AllowBatchImageGeneration:       snapshot.Group.AllowBatchImageGeneration,
+			ImageCountBilling:               snapshot.Group.ImageCountBilling,
 			ImageRateIndependent:            snapshot.Group.ImageRateIndependent,
 			ImageRateMultiplier:             snapshot.Group.ImageRateMultiplier,
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,

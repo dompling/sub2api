@@ -46,6 +46,19 @@ func TestLoadMinOutputTokensFromEnv(t *testing.T) {
 	require.Equal(t, 16, cfg.Gateway.MinOutputTokens)
 }
 
+func TestLoadGeminiSameAccountRetries(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 4, cfg.Gateway.MaxSameAccountRetriesGemini)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_MAX_SAME_ACCOUNT_RETRIES_GEMINI", "0")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Zero(t, cfg.Gateway.MaxSameAccountRetriesGemini)
+}
+
 func TestValidateMinOutputTokensMinimum(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
@@ -1901,6 +1914,16 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "gateway.openai_response_header_timeout",
 		},
 		{
+			name:    "gateway gemini same account retries negative",
+			mutate:  func(c *Config) { c.Gateway.MaxSameAccountRetriesGemini = -1 },
+			wantErr: "gateway.max_same_account_retries_gemini",
+		},
+		{
+			name:    "gateway gemini same account retries too large",
+			mutate:  func(c *Config) { c.Gateway.MaxSameAccountRetriesGemini = 11 },
+			wantErr: "gateway.max_same_account_retries_gemini",
+		},
+		{
 			name:    "gateway openai first output timeout below minimum",
 			mutate:  func(c *Config) { c.Gateway.OpenAIFirstOutputTimeoutSeconds = 29 },
 			wantErr: "gateway.openai_first_output_timeout_seconds",
@@ -2004,6 +2027,16 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "gateway stream data interval negative",
 			mutate:  func(c *Config) { c.Gateway.StreamDataIntervalTimeout = -1 },
 			wantErr: "gateway.stream_data_interval_timeout must be non-negative",
+		},
+		{
+			name:    "gateway excel bps stream data interval range",
+			mutate:  func(c *Config) { c.Gateway.ExcelBPSStreamDataIntervalTimeout = 10 },
+			wantErr: "gateway.excel_bps_stream_data_interval_timeout",
+		},
+		{
+			name:    "gateway excel bps stream data interval negative",
+			mutate:  func(c *Config) { c.Gateway.ExcelBPSStreamDataIntervalTimeout = -1 },
+			wantErr: "gateway.excel_bps_stream_data_interval_timeout",
 		},
 		{
 			name:    "gateway image stream keepalive range",
@@ -2671,6 +2704,12 @@ func TestLoad_DefaultGatewayImageStreamConfig(t *testing.T) {
 	}
 	if cfg.Gateway.StreamDataIntervalTimeout != 180 {
 		t.Fatalf("stream_data_interval_timeout = %d, want 180", cfg.Gateway.StreamDataIntervalTimeout)
+	}
+	if cfg.Gateway.ExcelBPSStreamDataIntervalTimeout != 120 {
+		t.Fatalf("excel_bps_stream_data_interval_timeout = %d, want 120", cfg.Gateway.ExcelBPSStreamDataIntervalTimeout)
+	}
+	if cfg.Gateway.ExcelBPSStateRedisEnabled {
+		t.Fatalf("excel_bps_state_redis_enabled = true, want false")
 	}
 	if cfg.Gateway.StreamKeepaliveInterval != 10 {
 		t.Fatalf("stream_keepalive_interval = %d, want 10", cfg.Gateway.StreamKeepaliveInterval)

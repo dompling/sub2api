@@ -53,12 +53,21 @@ const (
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Code     string `json:"code,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
+	Type   string `json:"type"`
+	Text   string `json:"text,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Status string `json:"status,omitempty"`
+	Code   string `json:"code,omitempty"`
+	// BPS evidence: upstream HTTP status, model, request ID and error code
+	// captured during an admin account test round trip.
+	UpstreamStatus    int    `json:"upstream_status,omitempty"`
+	UpstreamModel     string `json:"upstream_model,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
+	UpstreamErrorCode string `json:"upstream_error_code,omitempty"`
+	// UpstreamErrorMessage is BPS's own rejection message, redacted of the
+	// request token and account secrets.
+	UpstreamErrorMessage string `json:"upstream_error_message,omitempty"`
+	ImageURL             string `json:"image_url,omitempty"`
 	// AudioURL / VideoURL are data: or https URLs for in-browser media players.
 	AudioURL string `json:"audio_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`
@@ -166,6 +175,8 @@ type AccountTestService struct {
 	leonardoTokenProvider *LeonardoTokenProvider
 	// leonardoImageService 为 nil 时用测试专用的出图服务实例（单测注入用）。
 	leonardoImageService *LeonardoImageService
+	bpsProbeMu           sync.Mutex
+	bpsProbeAccounts     map[int64]struct{}
 }
 
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
@@ -450,6 +461,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.Platform == PlatformLeonardo {
 		return s.testLeonardoAccountConnection(c, account, modelID, prompt)
+	}
+
+	if account.Platform == PlatformFish {
+		return s.testFishAccountConnection(c, account, modelID, prompt)
 	}
 
 	// 按模型分流的多模型聚合平台（OpenCode、Command Code 等）。
@@ -1080,6 +1095,15 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
+	// BPS-only accounts are tested on the same gateway path as user Responses
+	// requests and never reach the native probes below, which would send the
+	// Excel token to ChatGPT Codex.
+	if account.IsBPSOAuth() {
+		return s.testBPSOAuthAccountConnection(c, account, modelID, prompt, mode)
+	}
+	if mode == AccountTestModeBPSTools {
+		return s.sendErrorAndEnd(c, "BPS tool probe requires a BPS OAuth account")
+	}
 
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
@@ -2662,6 +2686,14 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 	}
 }
 
+// geminiDefaultTestModel 返回 Gemini 连接测试未指定模型时使用的模型；Google One 账号只能使用其保守模型集。
+func geminiDefaultTestModel(account *Account) string {
+	if account.IsGeminiGoogleOne() {
+		return geminicli.GoogleOneModels[0].ID
+	}
+	return geminicli.DefaultTestModel
+}
+
 // testGeminiAccountConnection tests a Gemini account's connection
 func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
 	ctx := c.Request.Context()
@@ -2669,7 +2701,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 	// Determine the model to use
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = geminicli.DefaultTestModel
+		testModelID = geminiDefaultTestModel(account)
 	}
 
 	// For static upstream credentials with model mapping, map the model

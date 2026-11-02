@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/netip"
 	"net/textproto"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -69,6 +71,7 @@ type Config struct {
 	Server                  ServerConfig                  `mapstructure:"server"`
 	Log                     LogConfig                     `mapstructure:"log"`
 	CORS                    CORSConfig                    `mapstructure:"cors"`
+	MCP                     MCPConfig                     `mapstructure:"mcp"`
 	Security                SecurityConfig                `mapstructure:"security"`
 	Billing                 BillingConfig                 `mapstructure:"billing"`
 	Turnstile               TurnstileConfig               `mapstructure:"turnstile"`
@@ -114,6 +117,54 @@ type Config struct {
 // SimpleModeConfig controls startup behavior in simple mode.
 type SimpleModeConfig struct {
 	AutoCreateDefaultGroups bool `mapstructure:"auto_create_default_groups" yaml:"auto_create_default_groups"`
+}
+
+// MCPConfig fixes the public resource URL used by OAuth discovery and tokens.
+// Setting it is also the explicit opt-in that enables MCP.
+type MCPConfig struct {
+	PublicURL string `mapstructure:"public_url"`
+}
+
+// Enabled reports whether the operator opted in to the management MCP endpoint.
+func (c MCPConfig) Enabled() bool { return strings.TrimSpace(c.PublicURL) != "" }
+
+// Validate normalizes the configured resource URL without trusting request headers.
+// An empty URL keeps MCP and its OAuth endpoints disabled.
+func (c *MCPConfig) Validate() error {
+	raw := strings.TrimSpace(c.PublicURL)
+	if raw == "" {
+		c.PublicURL = ""
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("mcp.public_url invalid: %w", err)
+	}
+	if !u.IsAbs() || u.Hostname() == "" || !httpguts.ValidHostHeader(u.Host) || strings.ContainsAny(u.Host, "*%") {
+		return fmt.Errorf("mcp.public_url must be an absolute URL with a valid host")
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return fmt.Errorf("mcp.public_url must not include userinfo, query, or fragment")
+	}
+	if u.Path != "/api/v1/mcp" || u.EscapedPath() != "/api/v1/mcp" {
+		return fmt.Errorf("mcp.public_url must have the exact path /api/v1/mcp without a trailing slash")
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("mcp.public_url must have a valid port")
+		}
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	host := u.Hostname()
+	addr, _ := netip.ParseAddr(host)
+	localDevelopment := host == "localhost" || addr.IsLoopback()
+	if u.Scheme != "https" && (u.Scheme != "http" || !localDevelopment) {
+		return fmt.Errorf("mcp.public_url must use HTTPS (HTTP is allowed only for localhost or loopback IPs)")
+	}
+	c.PublicURL = u.String()
+	return nil
 }
 
 // PluginConfig 控制管理员手动上传的本地进程插件。
@@ -982,6 +1033,15 @@ type GatewayConfig struct {
 	// MinOutputTokens is the minimum max_output_tokens used when
 	// converting Chat Completions or Anthropic requests to Responses.
 	MinOutputTokens int `mapstructure:"min_output_tokens"`
+	// KiroCacheEmulationRedisEnabled shares Kiro cache emulation prefix state
+	// via Redis across instances instead of per-process memory. Default false.
+	KiroCacheEmulationRedisEnabled bool `mapstructure:"kiro_cache_emulation_redis_enabled"`
+	// ExcelBPSStateRedisEnabled shares basispoints replay/catalog state via
+	// Redis across instances instead of per-process memory. Default false.
+	ExcelBPSStateRedisEnabled bool `mapstructure:"excel_bps_state_redis_enabled"`
+	// ExcelBPSStreamDataIntervalTimeout aborts a BPS stream that produces no
+	// data frames for this many seconds. 0 disables, range 30-300, default 120.
+	ExcelBPSStreamDataIntervalTimeout int `mapstructure:"excel_bps_stream_data_interval_timeout"`
 	// 等待上游响应头的超时时间（秒），0表示无超时
 	// 注意：这不影响流式数据传输，只控制等待响应头的时间
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
@@ -1126,6 +1186,8 @@ type GatewayConfig struct {
 	MaxAccountSwitches int `mapstructure:"max_account_switches"`
 	// Gemini 账户切换最大次数（Gemini 平台单独配置，因 API 限制更严格）
 	MaxAccountSwitchesGemini int `mapstructure:"max_account_switches_gemini"`
+	// Gemini 同账号重试次数（429/5xx 等可重试错误在换号前对同一账号的重发次数，不含首次请求）
+	MaxSameAccountRetriesGemini int `mapstructure:"max_same_account_retries_gemini"`
 
 	// Antigravity 429 fallback 限流时间（分钟），解析重置时间失败时使用
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
@@ -1154,6 +1216,9 @@ type GatewayConfig struct {
 	// CNProviders: 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）的余额检测配置。
 	// 仅作用于 payg（按量付费）账号：周期探测余额，低于阈值则临时停调。
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
+
+	// Fish: fish 渠道的周期配额巡检配置。
+	Fish GatewayFishConfig `mapstructure:"fish"`
 }
 
 // GatewayGrokConfig holds Grok-specific gateway scheduling knobs.
@@ -1196,6 +1261,16 @@ type GatewayCNProvidersConfig struct {
 	BalanceCheckEnabled         bool    `mapstructure:"balance_check_enabled"`
 	BalanceThreshold            float64 `mapstructure:"balance_threshold"`
 	BalanceCheckIntervalMinutes int     `mapstructure:"balance_check_interval_minutes"`
+}
+
+// GatewayFishConfig fish 渠道的周期配额巡检。
+//
+//   - quota_sweep_interval_minutes: 巡检周期（分钟，默认 30；<=0 关闭）。
+//     每轮对全部 active 的 fish token 号拉一次 entitlements（复用用量服务的
+//     缓存/singleflight/代理路由），看到每日出图次数耗尽即落临时不可调度到
+//     重置时刻——不依赖请求流量和管理端看列表。
+type GatewayFishConfig struct {
+	QuotaSweepIntervalMinutes int `mapstructure:"quota_sweep_interval_minutes"`
 }
 
 type GatewayLiveConfig struct {
@@ -2114,6 +2189,7 @@ func setDefaults() {
 	// CORS
 	viper.SetDefault("cors.allowed_origins", []string{})
 	viper.SetDefault("cors.allow_credentials", true)
+	viper.SetDefault("mcp.public_url", "")
 
 	// WebAuthn / Passkeys are opt-in because every deployment must explicitly
 	// declare its relying-party domain and trusted browser origins.
@@ -2466,6 +2542,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.failover_on_400", false)
 	viper.SetDefault("gateway.max_account_switches", 15)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
+	viper.SetDefault("gateway.max_same_account_retries_gemini", 4)
 	viper.SetDefault("gateway.force_codex_cli", false)
 	viper.SetDefault("gateway.disable_codex_identity_enforcement", false)
 	viper.SetDefault("gateway.disable_codex_originator_normalization", false)
@@ -2564,6 +2641,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.cn_providers.balance_check_enabled", true)
 	viper.SetDefault("gateway.cn_providers.balance_threshold", 0.5)
 	viper.SetDefault("gateway.cn_providers.balance_check_interval_minutes", 10)
+	// fish 渠道周期配额巡检：耗尽号不依赖流量/看列表即可落冷却。
+	viper.SetDefault("gateway.fish.quota_sweep_interval_minutes", 30)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
@@ -2588,6 +2667,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.client_idle_ttl_seconds", 900)
 	viper.SetDefault("gateway.concurrency_slot_ttl_minutes", 30) // 并发槽位过期时间（支持超长请求）
 	viper.SetDefault("gateway.stream_data_interval_timeout", 180)
+	// Excel BPS 流停滞保护（秒），0=禁用；未注册默认值时环境变量覆盖也不会生效。
+	viper.SetDefault("gateway.excel_bps_stream_data_interval_timeout", 120)
+	viper.SetDefault("gateway.excel_bps_state_redis_enabled", false)
 	viper.SetDefault("gateway.stream_keepalive_interval", 10)
 	viper.SetDefault("gateway.kiro_stream_keepalive_interval", 25)
 	viper.SetDefault("gateway.image_stream_data_interval_timeout", 900)
@@ -2697,6 +2779,7 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
+	viper.SetDefault("gateway.kiro_cache_emulation_redis_enabled", false)
 	viper.SetDefault("update.proxy_url", "")
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its
@@ -2903,6 +2986,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gemini.oauth.client_id and gemini.oauth.client_secret must be both set or both empty")
 	}
 
+	if err := c.MCP.Validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.Server.FrontendURL) != "" {
 		if err := ValidateAbsoluteHTTPURL(c.Server.FrontendURL); err != nil {
 			return fmt.Errorf("server.frontend_url invalid: %w", err)
@@ -3418,6 +3504,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.GrokResponseHeaderTimeout < 0 || c.Gateway.GrokResponseHeaderTimeout > 1800 {
 		return fmt.Errorf("gateway.grok_response_header_timeout must be between 0-1800 seconds")
 	}
+	if c.Gateway.MaxSameAccountRetriesGemini < 0 || c.Gateway.MaxSameAccountRetriesGemini > 10 {
+		return fmt.Errorf("gateway.max_same_account_retries_gemini must be between 0-10")
+	}
 	if c.Gateway.OpenAIFirstOutputTimeoutSeconds < 0 || c.Gateway.OpenAIFirstOutputTimeoutSeconds > 600 ||
 		(c.Gateway.OpenAIFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIFirstOutputTimeoutSeconds < 30) {
 		return fmt.Errorf("gateway.openai_first_output_timeout_seconds must be 0 or between 30-600 seconds")
@@ -3482,6 +3571,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.StreamDataIntervalTimeout != 0 &&
 		(c.Gateway.StreamDataIntervalTimeout < 30 || c.Gateway.StreamDataIntervalTimeout > 300) {
 		return fmt.Errorf("gateway.stream_data_interval_timeout must be 0 or between 30-300 seconds")
+	}
+	if n := c.Gateway.ExcelBPSStreamDataIntervalTimeout; n != 0 && (n < 30 || n > 300) {
+		return fmt.Errorf("gateway.excel_bps_stream_data_interval_timeout must be 0 or between 30-300 seconds")
 	}
 	if c.Gateway.StreamKeepaliveInterval < 0 {
 		return fmt.Errorf("gateway.stream_keepalive_interval must be non-negative")

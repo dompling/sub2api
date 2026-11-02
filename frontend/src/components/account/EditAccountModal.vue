@@ -26,8 +26,144 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
-      <!-- API Key fields (only for apikey type) -->
-      <div v-if="account.type === 'apikey'" class="space-y-4">
+      <!-- Fish：原生号更新 api_key；中转号走 base_url + api_key。
+           通用 apikey 区块对 fish 隐藏——其 base_url 默认值会把原生号误变成中转号。 -->
+      <div v-if="account.platform === 'fish' && account.type === 'apikey' && isFishRelayEdit" class="space-y-4">
+        <div>
+          <label class="input-label">Base URL（中转）</label>
+          <input v-model="editBaseUrl" type="text" class="input font-mono text-xs" placeholder="https://api.openai.com" />
+          <p class="input-hint">承接 fish 原生无法处理的请求；模型名经渠道映射改写。</p>
+        </div>
+        <div>
+          <label class="input-label">API Key（中转）</label>
+          <input v-model="editApiKey" type="password" class="input font-mono" placeholder="sk-..." />
+          <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+        </div>
+      </div>
+      <div v-else-if="account.platform === 'fish' && account.type === 'apikey'" class="space-y-4">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.fish.tokenLabel') }}</label>
+          <textarea
+            v-model="fishTokenEdit"
+            rows="3"
+            class="input font-mono text-xs"
+            placeholder="留空保持不变；粘贴新 API Key 覆盖"
+            data-testid="fish-token-edit"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.fish.tokenHint') }}</p>
+        </div>
+        <div data-testid="fish-max-quality-section">
+          <label class="input-label">{{ t('admin.accounts.fishMaxQuality') }}</label>
+          <Select v-model="fishMaxQuality" :options="fishMaxQualityOptions" data-testid="fish-max-quality" />
+          <p class="input-hint">{{ t('admin.accounts.fishMaxQualityHint') }}</p>
+        </div>
+      </div>
+
+      <!-- Fish 模型白名单 / 映射。token 号和中转号共用，不走其他平台的模型区块。 -->
+      <div
+        v-if="account.platform === 'fish' && account.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="fish-model-restriction-section"
+      >
+        <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+        <div class="mb-4 flex gap-2">
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'whitelist'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'whitelist'
+                ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelWhitelist') }}
+          </button>
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'mapping'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'mapping'
+                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelMapping') }}
+          </button>
+        </div>
+        <div v-if="modelRestrictionMode === 'whitelist'">
+          <ModelWhitelistSelector
+            v-model="allowedModels"
+            :model-mappings="modelMappings"
+            platform="fish"
+            :account-id="account?.id"
+            :account-type="account?.type"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+            <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
+              t('admin.accounts.supportsAllModels')
+            }}</span>
+          </p>
+        </div>
+        <div v-else>
+          <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+            <p class="text-xs text-purple-700 dark:text-purple-400">{{ t('admin.accounts.mapRequestModels') }}</p>
+          </div>
+          <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
+            <div
+              v-for="(mapping, index) in modelMappings"
+              :key="'fish-' + getModelMappingKey(mapping)"
+              class="flex items-center gap-2"
+            >
+              <input
+                v-model="mapping.from"
+                type="text"
+                data-testid="fish-model-mapping-from"
+                class="input flex-1"
+                :placeholder="t('admin.accounts.requestModel')"
+              />
+              <span class="text-gray-400">→</span>
+              <input
+                v-model="mapping.to"
+                type="text"
+                data-testid="fish-model-mapping-to"
+                class="input flex-1"
+                :placeholder="t('admin.accounts.actualModel')"
+              />
+              <button
+                type="button"
+                @click="removeModelMapping(index)"
+                class="rounded-lg p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            @click="addModelMapping"
+            class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 dark:border-dark-500 dark:text-gray-400"
+          >
+            + {{ t('admin.accounts.addMapping') }}
+          </button>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="preset in presetMappings"
+              :key="'fish-' + preset.label"
+              type="button"
+              @click="addPresetMapping(preset.from, preset.to)"
+              :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
+            >
+              + {{ preset.label }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Key fields (only for apikey type). Fish 有自己的凭据和模型区块。 -->
+      <div v-if="account.type === 'apikey' && account.platform !== 'fish'" class="space-y-4">
         <!-- Kiro 直连 AWS 账号不使用 Base URL,隐藏;Kiro 外部中转账号(已配 base_url)显示可编辑 -->
         <!-- 国产供应商 adaptive 协议下 Base URL 由各协议入口单独配置,此处隐藏 -->
         <div
@@ -277,7 +413,11 @@
         </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
-        <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div
+          v-if="account.platform !== 'antigravity'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+          :data-testid="account.platform === 'grok' ? 'grok-model-settings' : undefined"
+        >
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
 
           <div
@@ -291,18 +431,32 @@
 
           <template v-else>
             <!-- Mode Toggle -->
-            <div class="mb-4 flex gap-2">
+            <div
+              :data-testid="account.platform === 'grok' ? 'grok-model-mode-tabs' : undefined"
+              :class="account.platform === 'grok'
+                ? 'mb-4 flex gap-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-900'
+                : 'mb-4 flex gap-2'"
+            >
               <button
                 type="button"
                 @click="modelRestrictionMode = 'whitelist'"
-                :class="[
-                  'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  modelRestrictionMode === 'whitelist'
-                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
+                :aria-pressed="account.platform === 'grok' ? modelRestrictionMode === 'whitelist' : undefined"
+                :class="account.platform === 'grok'
+                  ? [
+                      'rounded-lg px-3 py-2 text-sm',
+                      modelRestrictionMode === 'whitelist'
+                        ? 'bg-white text-cyan-700 shadow-sm dark:bg-dark-800 dark:text-cyan-300'
+                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'
+                    ]
+                  : [
+                      'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                      modelRestrictionMode === 'whitelist'
+                        ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                    ]"
               >
                 <svg
+                  v-if="account.platform !== 'grok'"
                   class="mr-1.5 inline h-4 w-4"
                   fill="none"
                   viewBox="0 0 24 24"
@@ -320,14 +474,23 @@
               <button
                 type="button"
                 @click="modelRestrictionMode = 'mapping'"
-                :class="[
-                  'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  modelRestrictionMode === 'mapping'
-                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
+                :aria-pressed="account.platform === 'grok' ? modelRestrictionMode === 'mapping' : undefined"
+                :class="account.platform === 'grok'
+                  ? [
+                      'rounded-lg px-3 py-2 text-sm',
+                      modelRestrictionMode === 'mapping'
+                        ? 'bg-white text-purple-700 shadow-sm dark:bg-dark-800 dark:text-purple-300'
+                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'
+                    ]
+                  : [
+                      'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                      modelRestrictionMode === 'mapping'
+                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                    ]"
               >
                 <svg
+                  v-if="account.platform !== 'grok'"
                   class="mr-1.5 inline h-4 w-4"
                   fill="none"
                   viewBox="0 0 24 24"
@@ -344,16 +507,33 @@
               </button>
             </div>
 
+            <GrokModelDiagnosticsPanel
+              v-if="account.platform === 'grok'"
+              :key="'grok-diagnostics-' + account.id"
+              :diagnostics="grokDiagnostics"
+              :loading="diagnosticsLoading"
+              :dirty="grokDiagnosticsDirty"
+              :refresh-failed="diagnosticsRefreshFailed"
+              :can-sync="Boolean(account.id)"
+              :syncing="isGrokCatalogSyncing"
+              @sync="requestGrokCatalogSync"
+            />
+
+            <ModelWhitelistSelector
+              ref="grokApiKeyWhitelistRef"
+              v-show="modelRestrictionMode === 'whitelist'"
+              v-model="allowedModels"
+              :model-mappings="modelMappings"
+              :platform="account?.platform || 'anthropic'"
+              :account-id="account?.id"
+              :account-type="account?.type"
+              :show-sync-button="account.platform !== 'grok' || !account.id"
+              @upstream-sync-finished="refreshGrokDiagnostics"
+              @update:kiroUpstreamIDs="mergeKiroUpstreamIDs"
+            />
+
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector
-                v-model="allowedModels"
-                :model-mappings="modelMappings"
-                :platform="account?.platform || 'anthropic'"
-                :account-id="account?.id"
-                :account-type="account?.type"
-                @update:kiroUpstreamIDs="mergeKiroUpstreamIDs"
-              />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0 && account.platform === 'kiro'" data-testid="kiro-default-mapping-hint">{{
@@ -366,10 +546,11 @@
             </div>
 
             <!-- Mapping Mode -->
-            <div v-else>
-              <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
-                <p class="text-xs text-purple-700 dark:text-purple-400">
+            <div v-else :data-testid="account.platform === 'grok' ? 'grok-model-mapping-editor' : undefined">
+              <div :class="account.platform === 'grok' ? 'mb-3' : 'mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20'">
+                <p :class="account.platform === 'grok' ? 'text-xs text-gray-500 dark:text-dark-400' : 'text-xs text-purple-700 dark:text-purple-400'">
                   <svg
+                    v-if="account.platform !== 'grok'"
                     class="mr-1 inline h-4 w-4"
                     fill="none"
                     viewBox="0 0 24 24"
@@ -386,20 +567,41 @@
                 </p>
               </div>
 
+              <div
+                v-if="account.platform === 'grok'"
+                class="mb-1.5 grid grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.2fr)_2rem] gap-1.5 text-xs text-gray-500 dark:text-dark-400 sm:gap-2"
+              >
+                <span>{{ t('admin.accounts.grokModelDiagnostics.requestColumn') }}</span>
+                <span></span>
+                <span>{{ t('admin.accounts.grokModelDiagnostics.targetColumn') }}</span>
+              </div>
+
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
               <div
                 v-for="(mapping, index) in modelMappings"
                 :key="getModelMappingKey(mapping)"
-                class="flex items-center gap-2"
+                :data-testid="account.platform === 'grok' ? 'grok-model-mapping-row' : undefined"
+                :class="account.platform === 'grok'
+                  ? 'grid grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.2fr)_2rem] items-center gap-1.5 sm:gap-2'
+                  : 'flex items-center gap-2'"
               >
                 <input
                   v-model="mapping.from"
                   type="text"
-                  class="input flex-1"
+                  :aria-label="account.platform === 'grok' ? t('admin.accounts.grokModelDiagnostics.mappingFromAria', { index: index + 1 }) : undefined"
+                  :class="account.platform === 'grok' ? 'input min-w-0 w-full font-mono text-xs' : 'input flex-1'"
                   :placeholder="t('admin.accounts.requestModel')"
                 />
+                <Icon
+                  v-if="account.platform === 'grok'"
+                  name="arrowRight"
+                  size="sm"
+                  aria-hidden="true"
+                  class="w-4 shrink-0 text-gray-400"
+                />
                 <svg
+                  v-else
                   class="h-4 w-4 flex-shrink-0 text-gray-400"
                   fill="none"
                   viewBox="0 0 24 24"
@@ -415,15 +617,20 @@
                 <input
                   v-model="mapping.to"
                   type="text"
-                  class="input flex-1"
+                  :aria-label="account.platform === 'grok' ? t('admin.accounts.grokModelDiagnostics.mappingTargetAria', { index: index + 1 }) : undefined"
+                  :class="account.platform === 'grok' ? 'input min-w-0 w-full font-mono text-xs' : 'input flex-1'"
                   :placeholder="t('admin.accounts.actualModel')"
                 />
                 <button
                   type="button"
                   @click="removeModelMapping(index)"
-                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                  :aria-label="account.platform === 'grok' ? t('admin.accounts.grokModelDiagnostics.removeMappingAria', { index: index + 1 }) : undefined"
+                  :class="account.platform === 'grok'
+                    ? 'rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-400 dark:hover:bg-dark-700'
+                    : 'rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20'"
                 >
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <Icon v-if="account.platform === 'grok'" name="trash" size="sm" aria-hidden="true" />
+                  <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path
                       stroke-linecap="round"
                       stroke-linejoin="round"
@@ -438,7 +645,10 @@
             <button
               type="button"
               @click="addModelMapping"
-              class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
+              :data-testid="account.platform === 'grok' ? 'grok-model-mapping-add' : undefined"
+              :class="account.platform === 'grok'
+                ? 'mb-3 inline-flex items-center gap-1 py-2 text-xs text-primary-700 dark:text-primary-300'
+                : 'mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300'"
             >
               <svg
                 class="mr-1 inline h-4 w-4"
@@ -829,9 +1039,9 @@
 
       <!-- OpenAI / Kiro / Grok / Leonardo OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
-        v-if="(account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'leonardo') && account.type === 'oauth'"
+        v-if="((account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'leonardo') && account.type === 'oauth') || (account.platform === 'openai' && account.type === 'bps-oauth')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
-        data-testid="oauth-model-mapping-section"
+        :data-testid="account.platform === 'grok' ? 'grok-model-settings' : 'oauth-model-mapping-section'"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
 
@@ -846,43 +1056,82 @@
 
         <template v-else>
           <!-- Mode Toggle -->
-          <div class="mb-4 flex gap-2">
+          <div
+            :data-testid="account.platform === 'grok' ? 'grok-model-mode-tabs' : undefined"
+            :class="account.platform === 'grok'
+              ? 'mb-4 flex gap-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-900'
+              : 'mb-4 flex gap-2'"
+          >
             <button
               type="button"
               @click="modelRestrictionMode = 'whitelist'"
-              :class="[
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                modelRestrictionMode === 'whitelist'
-                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
+              :aria-pressed="account.platform === 'grok' ? modelRestrictionMode === 'whitelist' : undefined"
+              :class="account.platform === 'grok'
+                ? [
+                    'rounded-lg px-3 py-2 text-sm',
+                    modelRestrictionMode === 'whitelist'
+                      ? 'bg-white text-cyan-700 shadow-sm dark:bg-dark-800 dark:text-cyan-300'
+                      : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'
+                  ]
+                : [
+                    'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                    modelRestrictionMode === 'whitelist'
+                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                  ]"
             >
               {{ t('admin.accounts.modelWhitelist') }}
             </button>
             <button
               type="button"
               @click="modelRestrictionMode = 'mapping'"
-              :class="[
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                modelRestrictionMode === 'mapping'
-                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
+              :aria-pressed="account.platform === 'grok' ? modelRestrictionMode === 'mapping' : undefined"
+              :class="account.platform === 'grok'
+                ? [
+                    'rounded-lg px-3 py-2 text-sm',
+                    modelRestrictionMode === 'mapping'
+                      ? 'bg-white text-purple-700 shadow-sm dark:bg-dark-800 dark:text-purple-300'
+                      : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'
+                  ]
+                : [
+                    'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                    modelRestrictionMode === 'mapping'
+                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                  ]"
             >
               {{ t('admin.accounts.modelMapping') }}
             </button>
           </div>
 
+          <GrokModelDiagnosticsPanel
+            v-if="account.platform === 'grok'"
+            :key="'grok-diagnostics-' + account.id"
+            :diagnostics="grokDiagnostics"
+            :loading="diagnosticsLoading"
+            :dirty="grokDiagnosticsDirty"
+            :refresh-failed="diagnosticsRefreshFailed"
+            :can-sync="Boolean(account.id)"
+            :syncing="isGrokCatalogSyncing"
+            @sync="requestGrokCatalogSync"
+          />
+
+          <ModelWhitelistSelector
+            ref="grokOAuthWhitelistRef"
+            v-show="modelRestrictionMode === 'whitelist'"
+            v-model="allowedModels"
+            :model-mappings="modelMappings"
+            :platform="account?.platform || 'anthropic'"
+            :available-models="isBPSOAuthAccount ? bpsCandidateModels : undefined"
+            :account-id="account?.id"
+            :account-type="account?.type"
+            :show-sync-button="account.platform !== 'grok' || !account.id"
+            @upstream-sync-finished="refreshGrokDiagnostics"
+            @update:kiroUpstreamIDs="mergeKiroUpstreamIDs"
+          />
+
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector
-              v-model="allowedModels"
-              :model-mappings="modelMappings"
-              :platform="account?.platform || 'anthropic'"
-              :account-id="account?.id"
-              :account-type="account?.type"
-              @update:kiroUpstreamIDs="mergeKiroUpstreamIDs"
-            />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0 && account.platform === 'kiro'" data-testid="kiro-default-mapping-hint">{{
@@ -895,27 +1144,48 @@
           </div>
 
           <!-- Mapping Mode -->
-          <div v-else>
-            <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
-              <p class="text-xs text-purple-700 dark:text-purple-400">
+          <div v-else :data-testid="account.platform === 'grok' ? 'grok-model-mapping-editor' : undefined">
+            <div :class="account.platform === 'grok' ? 'mb-3' : 'mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20'">
+              <p :class="account.platform === 'grok' ? 'text-xs text-gray-500 dark:text-dark-400' : 'text-xs text-purple-700 dark:text-purple-400'">
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
+            </div>
+
+            <div
+              v-if="account.platform === 'grok'"
+              class="mb-1.5 grid grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.2fr)_2rem] gap-1.5 text-xs text-gray-500 dark:text-dark-400 sm:gap-2"
+            >
+              <span>{{ t('admin.accounts.grokModelDiagnostics.requestColumn') }}</span>
+              <span></span>
+              <span>{{ t('admin.accounts.grokModelDiagnostics.targetColumn') }}</span>
             </div>
 
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
               <div
                 v-for="(mapping, index) in modelMappings"
                 :key="'oauth-' + getModelMappingKey(mapping)"
-                class="flex items-center gap-2"
+                :data-testid="account.platform === 'grok' ? 'grok-model-mapping-row' : undefined"
+                :class="account.platform === 'grok'
+                  ? 'grid grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.2fr)_2rem] items-center gap-1.5 sm:gap-2'
+                  : 'flex items-center gap-2'"
               >
                 <input
                   v-model="mapping.from"
                   type="text"
                   data-testid="oauth-model-mapping-from"
-                  class="input flex-1"
+                  :aria-label="account.platform === 'grok' ? t('admin.accounts.grokModelDiagnostics.mappingFromAria', { index: index + 1 }) : undefined"
+                  :class="account.platform === 'grok' ? 'input min-w-0 w-full font-mono text-xs' : 'input flex-1'"
                   :placeholder="t('admin.accounts.requestModel')"
                 />
+                <Icon
+                  v-if="account.platform === 'grok'"
+                  name="arrowRight"
+                  size="sm"
+                  aria-hidden="true"
+                  class="w-4 shrink-0 text-gray-400"
+                />
                 <svg
+                  v-else
                   class="h-4 w-4 flex-shrink-0 text-gray-400"
                   fill="none"
                   viewBox="0 0 24 24"
@@ -932,16 +1202,21 @@
                   v-model="mapping.to"
                   type="text"
                   data-testid="oauth-model-mapping-to"
-                  class="input flex-1"
+                  :aria-label="account.platform === 'grok' ? t('admin.accounts.grokModelDiagnostics.mappingTargetAria', { index: index + 1 }) : undefined"
+                  :class="account.platform === 'grok' ? 'input min-w-0 w-full font-mono text-xs' : 'input flex-1'"
                   :placeholder="t('admin.accounts.actualModel')"
                 />
                 <button
                   type="button"
                   data-testid="oauth-model-mapping-remove"
                   @click="removeModelMapping(index)"
-                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                  :aria-label="account.platform === 'grok' ? t('admin.accounts.grokModelDiagnostics.removeMappingAria', { index: index + 1 }) : undefined"
+                  :class="account.platform === 'grok'
+                    ? 'rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-400 dark:hover:bg-dark-700'
+                    : 'rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20'"
                 >
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <Icon v-if="account.platform === 'grok'" name="trash" size="sm" aria-hidden="true" />
+                  <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path
                       stroke-linecap="round"
                       stroke-linejoin="round"
@@ -956,7 +1231,10 @@
             <button
               type="button"
               @click="addModelMapping"
-              class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
+              :data-testid="account.platform === 'grok' ? 'grok-model-mapping-add' : undefined"
+              :class="account.platform === 'grok'
+                ? 'mb-3 inline-flex items-center gap-1 py-2 text-xs text-primary-700 dark:text-primary-300'
+                : 'mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300'"
             >
               + {{ t('admin.accounts.addMapping') }}
             </button>
@@ -967,6 +1245,7 @@
                 v-for="preset in presetMappings"
                 :key="'oauth-' + preset.label"
                 type="button"
+                data-testid="oauth-preset-mapping"
                 @click="addPresetMapping(preset.from, preset.to)"
                 :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
               >
@@ -2418,9 +2697,9 @@
           @update:quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType = $event"
         />
       </div>
-      <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
+      <!-- 配额控制 (非 Anthropic apikey/bedrock，以及 Vertex service_account) -->
       <div
-        v-else-if="account?.type === 'apikey' || account?.type === 'bedrock'"
+        v-else-if="supportsAccountQuota(account?.type)"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="mb-3">
@@ -2472,7 +2751,7 @@
 
       <!-- OpenAI API 长上下文计费开关 -->
       <div
-        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey' || account?.type === 'bps-oauth')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -2500,6 +2779,35 @@
               ]"
             />
           </button>
+        </div>
+      </div>
+
+      <!-- Excel / BPS 协议区：BPS-only（BPS OAuth）账号只走 BPS，可服务的模型以上方模型限制为准 -->
+      <div
+        v-if="isBPSOAuthAccount && !isSparkShadow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="excel-bps-section"
+      >
+        <label class="input-label mb-0">{{ t('admin.accounts.openai.excelBPS') }}</label>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.openai.excelBPSDesc') }}
+        </p>
+        <div class="mt-3 space-y-3">
+          <div>
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" data-testid="excel-bps-ignore-encrypted-content" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContentDesc') }}</p>
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSCacheCreationAsInput" type="checkbox" data-testid="excel-bps-cache-creation-as-input" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInput') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInputDesc') }}</p>
+          </div>
+          <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
         </div>
       </div>
 
@@ -3379,7 +3687,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
@@ -3397,6 +3705,7 @@ import type {
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
   GrokMediaEligibilityState,
+  GrokModelDiagnostics,
   OpenCodeGoUsageState,
   OpenCodeGoUsageWindow,
   TempUnschedulableScope
@@ -3411,6 +3720,7 @@ import {
   leonardoImageLimitsFromExtra,
   type LeonardoImageLimitsForm
 } from '@/utils/leonardoImageLimits'
+import { FISH_MAX_QUALITY_VALUES, applyFishMaxQualityToExtra, fishMaxQualityFromExtra } from '@/utils/fishImageLimits'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -3418,6 +3728,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import GrokModelDiagnosticsPanel from '@/components/account/GrokModelDiagnosticsPanel.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
@@ -3475,6 +3786,7 @@ import {
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { isKiroDirectApiKeyAccount, isKiroRelayAccount } from '@/utils/kiroAccount'
+import { supportsAccountQuota } from '@/utils/accountQuota'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
 import { VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
@@ -3492,11 +3804,13 @@ import {
 } from '@/utils/openaiWsMode'
 import {
   getPresetMappingsByPlatform,
+  getBPSPresetMappings,
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
+import { useBPSCandidateModels } from '@/composables/useBPSCandidateModels'
 
 interface Props {
   show: boolean
@@ -3529,6 +3843,11 @@ const selectableGroups = computed(() => {
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
+
+// BPS-only（BPS OAuth）账号：官方 Excel 客户端授权，只能走 BPS。
+const isBPSOAuthAccount = computed(() =>
+  props.account?.platform === 'openai' && props.account?.type === 'bps-oauth'
+)
 
 const codexTurnTickets = computed(() => props.account?.codex_turn_tickets ?? [])
 
@@ -3657,6 +3976,12 @@ const isKiroRelay = computed(() => isKiroRelayAccount(props.account))
 const isKiroDirectApiKey = computed(() => isKiroDirectApiKeyAccount(props.account))
 // Leonardo Cookie 账号(oauth)消耗 Leonardo 积分;中转账号(apikey)不消耗,故只对前者展示积分单价。
 const isLeonardoCookieAccount = computed(() => props.account?.platform === 'leonardo' && props.account?.type === 'oauth')
+// Fish：凭据里有 base_url = 中转号；没有 base_url = 原生号（密钥在 api_key）。
+const isFishRelayEdit = computed(() => {
+  const credentials = (props.account?.credentials as Record<string, unknown>) || {}
+  return typeof credentials.base_url === 'string' && credentials.base_url.trim() !== ''
+})
+const fishTokenEdit = ref('')
 
 const resolveKiroAPIRegionInput = (credentials: Record<string, unknown>) => {
   const value = credentials.api_region
@@ -3689,6 +4014,11 @@ const leonardoImageLimits = ref<LeonardoImageLimitsForm>(defaultLeonardoImageLim
 const leonardoMaxQualityOptions = computed(() => [
   { value: '', label: t('admin.accounts.leonardoMaxQualityUnlimited') },
   ...LEONARDO_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
+])
+const fishMaxQuality = ref('')
+const fishMaxQualityOptions = computed(() => [
+  { value: '', label: t('admin.accounts.fishMaxQualityUnlimited') },
+  ...FISH_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
 ])
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
@@ -3872,6 +4202,8 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+// BPS OAuth 账号的白名单候选只列 BPS 模型（含同步上游追加的）
+const { candidates: bpsCandidateModels, reset: resetBPSCandidateModels } = useBPSCandidateModels(allowedModels)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -3926,6 +4258,152 @@ const headerOverrideCapable = computed(
 // Grok OAuth 自定义上游地址（仅转发端点；OAuth 授权/令牌刷新不受影响）
 const grokOAuthCustomBaseUrlEnabled = ref(false)
 const grokOAuthBaseUrl = ref('')
+const grokDiagnostics = ref<GrokModelDiagnostics | null>(null)
+const diagnosticsLoading = ref(false)
+const diagnosticsRefreshFailed = ref(false)
+const grokDiagnosticsSyncing = ref(false)
+let diagnosticsGeneration = 0
+let grokDiagnosticsSyncVersion = 0
+const GROK_API_KEY_DEFAULT_BASE_URL = 'https://api.x.ai/v1'
+
+function normalizedGrokMapping(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object') return {}
+  const mapping: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== 'string') continue
+    const from = key.trim()
+    const to = raw.trim()
+    if (!from || !to) continue
+    mapping[from] = to
+  }
+  return mapping
+}
+
+function sameGrokMapping(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
+}
+
+const grokDiagnosticsDirty = computed(() => {
+  if (props.account?.platform !== 'grok') return false
+  const credentials = (props.account.credentials as Record<string, unknown> | undefined) || {}
+  if (!sameGrokMapping(normalizedGrokMapping(credentials.model_mapping), normalizedGrokMapping(buildModelRestrictionMapping()))) {
+    return true
+  }
+
+  const savedBase = typeof credentials.base_url === 'string' ? credentials.base_url.trim() : ''
+  if (props.account.type === 'oauth') {
+    const savedCustom = isCustomGrokBaseUrl(savedBase)
+    if (grokOAuthCustomBaseUrlEnabled.value !== savedCustom) return true
+    return grokOAuthCustomBaseUrlEnabled.value && grokOAuthBaseUrl.value.trim() !== savedBase
+  }
+  if (props.account.type === 'apikey') {
+    const savedEffective = savedBase || GROK_API_KEY_DEFAULT_BASE_URL
+    const current = editBaseUrl.value.trim() || GROK_API_KEY_DEFAULT_BASE_URL
+    return current !== savedEffective
+  }
+  return false
+})
+
+const resetGrokDiagnostics = () => {
+  diagnosticsGeneration += 1
+  grokDiagnosticsSyncVersion += 1
+  grokDiagnostics.value = null
+  diagnosticsLoading.value = false
+  diagnosticsRefreshFailed.value = false
+  grokDiagnosticsSyncing.value = false
+}
+
+const refreshGrokDiagnostics = async () => {
+  const id = props.account?.id
+  if (!props.show || props.account?.platform !== 'grok' || !id) return
+  const generation = ++diagnosticsGeneration
+  diagnosticsLoading.value = true
+  diagnosticsRefreshFailed.value = false
+  try {
+    const fresh = await adminAPI.accounts.getById(id)
+    if (generation !== diagnosticsGeneration || !props.show || props.account?.id !== id) return
+    grokDiagnostics.value = fresh.grok_model_diagnostics ?? null
+  } catch {
+    if (generation === diagnosticsGeneration) diagnosticsRefreshFailed.value = true
+  } finally {
+    if (generation === diagnosticsGeneration) diagnosticsLoading.value = false
+  }
+}
+
+const syncGrokDiagnostics = async () => {
+  const id = props.account?.id
+  if (!props.show || props.account?.platform !== 'grok' || !id || grokDiagnosticsSyncing.value) return
+  const syncVersion = grokDiagnosticsSyncVersion
+  grokDiagnosticsSyncing.value = true
+  try {
+    const result = await adminAPI.accounts.syncUpstreamModels(id)
+    if (syncVersion !== grokDiagnosticsSyncVersion || !props.show || props.account?.id !== id) return
+    const warnings = result.warnings ?? []
+    if (result.discovery_source === 'configured_fallback') {
+      appStore.showWarning(t('admin.accounts.grokModelDiagnostics.configuredFallback'))
+    }
+    const hasIncompleteMetadata = warnings.some((warning) => warning.code === 'upstream_model_metadata_incomplete')
+    const hasPartialMetadata = warnings.some((warning) => warning.code === 'upstream_model_metadata_partial')
+    if (hasIncompleteMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
+    } else if (hasPartialMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
+    }
+  } catch (error) {
+    if (syncVersion !== grokDiagnosticsSyncVersion || !props.show || props.account?.id !== id) return
+    const message = extractApiErrorMessage(error, t('admin.accounts.syncUpstreamModelsFailed'))
+    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
+  } finally {
+    if (syncVersion === grokDiagnosticsSyncVersion && props.show && props.account?.id === id) {
+      grokDiagnosticsSyncing.value = false
+      await refreshGrokDiagnostics()
+    }
+  }
+}
+
+const grokApiKeyWhitelistRef = ref<InstanceType<typeof ModelWhitelistSelector> | null>(null)
+const grokOAuthWhitelistRef = ref<InstanceType<typeof ModelWhitelistSelector> | null>(null)
+const activeGrokWhitelist = computed(() => props.account?.type === 'oauth'
+  ? grokOAuthWhitelistRef.value : grokApiKeyWhitelistRef.value)
+const isGrokCatalogSyncing = computed(() => grokDiagnosticsSyncing.value
+  || Boolean(activeGrokWhitelist.value?.isSyncingUpstream))
+const requestGrokCatalogSync = async () => {
+  if (!props.show || props.account?.platform !== 'grok' || !props.account.id
+      || diagnosticsLoading.value || isGrokCatalogSyncing.value) return
+  const mode = modelRestrictionMode.value
+  const selector = activeGrokWhitelist.value
+  if (mode === 'whitelist') {
+    if (!selector) return
+    await selector.syncUpstreamModels()
+    return
+  }
+  await syncGrokDiagnostics()
+}
+
+watch(
+  [() => props.show, () => props.account?.id, () => props.account?.platform],
+  ([show, id, platform], previous) => {
+    const wasShow = previous?.[0]
+    const previousId = previous?.[1]
+    if (!show || platform !== 'grok' || !id) {
+      resetGrokDiagnostics()
+      return
+    }
+    if (!wasShow || id !== previousId) {
+      resetGrokDiagnostics()
+      void refreshGrokDiagnostics()
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  resetGrokDiagnostics()
+})
+
 // Grok Free OAuth accounts use client-tool prompt caching by default. Keep an
 // explicit false in the account extra as the opt-out signal.
 const grokClientToolCacheEnabled = ref(true)
@@ -4085,6 +4563,8 @@ const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
+const excelBPSIgnoreEncryptedContent = ref(false)
+const excelBPSCacheCreationAsInput = ref(false)
 // OpenAI 订阅档位（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）手动覆盖值,
 // 存于 credentials.plan_type;'' 表示清空/自动识别
 const editPlanType = ref<string>('')
@@ -4357,7 +4837,9 @@ const openAICompactStatusKey = computed(() => {
 })
 
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(props.account?.platform || 'anthropic'))
+const presetMappings = computed(() =>
+  isBPSOAuthAccount.value ? getBPSPresetMappings() : getPresetMappingsByPlatform(props.account?.platform || 'anthropic')
+)
 const tempUnschedScopeOptions = computed<Array<{ value: TempUnschedulableScope; label: string; description: string }>>(() => [
   {
     value: 'model',
@@ -4587,6 +5069,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       ? Number(leonardoCreditUnitPrice) || 0
       : 0
   leonardoImageLimits.value = leonardoImageLimitsFromExtra(extra as Record<string, unknown> | undefined)
+  fishMaxQuality.value = fishMaxQualityFromExtra(extra as Record<string, unknown> | undefined)
   autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
   autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
   autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
@@ -4604,6 +5087,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
+  excelBPSIgnoreEncryptedContent.value = false
+  excelBPSCacheCreationAsInput.value = false
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -4680,6 +5165,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       openAICompactModelMappings.value = Object.entries(compactMappings).map(([from, to]) => ({ from, to }))
     }
   }
+  // BPS-only（BPS OAuth）账号只有 BPS 设置与通用的长上下文计费，不读取任何 Codex 专属设置。
+  if (newAccount.platform === 'openai' && newAccount.type === 'bps-oauth') {
+    openAILongContextBillingEnabled.value = extra?.openai_long_context_billing_enabled === true
+    excelBPSIgnoreEncryptedContent.value = extra?.openai_excel_bps_ignore_encrypted_content === true
+    excelBPSCacheCreationAsInput.value = extra?.openai_excel_bps_cache_creation_as_input === true
+  }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
     anthropicAPIKeyAuthScheme.value = extra?.anthropic_apikey_auth_scheme === 'authorization_bearer'
@@ -4698,8 +5189,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     }
   }
 
-  // Load quota limit for apikey/bedrock accounts (bedrock quota is also loaded in its own branch above)
-  if (newAccount.type === 'apikey' || newAccount.type === 'bedrock') {
+  // Load quota limit for apikey/bedrock/service_account accounts (bedrock quota is also loaded in its own branch above)
+  if (supportsAccountQuota(newAccount.type)) {
     const quotaVal = extra?.quota_limit as number | undefined
     editQuotaLimit.value = (quotaVal && quotaVal > 0) ? quotaVal : null
     const dailyVal = extra?.quota_daily_limit as number | undefined
@@ -4999,6 +5490,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   if (newAccount.platform !== 'kiro' || newAccount.type !== 'apikey') {
     editKiroAPIRegion.value = 'us-east-1'
   }
+  resetBPSCandidateModels()
 }
 
 async function loadTLSProfiles() {
@@ -5616,6 +6108,30 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
   }
 }
 
+// OpenAI 自动暂停阈值（5h/7d 用量窗口），OAuth 与 BPS OAuth 账号共用。
+const applyOpenAIAutoPauseExtra = (newExtra: Record<string, unknown>) => {
+  if (autoPause5hThreshold.value != null && autoPause5hThreshold.value > 0) {
+    newExtra.auto_pause_5h_threshold = autoPause5hThreshold.value / 100
+  } else {
+    delete newExtra.auto_pause_5h_threshold
+  }
+  if (autoPause7dThreshold.value != null && autoPause7dThreshold.value > 0) {
+    newExtra.auto_pause_7d_threshold = autoPause7dThreshold.value / 100
+  } else {
+    delete newExtra.auto_pause_7d_threshold
+  }
+  if (autoPause5hDisabled.value) {
+    newExtra.auto_pause_5h_disabled = true
+  } else {
+    delete newExtra.auto_pause_5h_disabled
+  }
+  if (autoPause7dDisabled.value) {
+    newExtra.auto_pause_7d_disabled = true
+  } else {
+    delete newExtra.auto_pause_7d_disabled
+  }
+}
+
 const handleSubmit = async () => {
   if (!props.account) return
   const accountID = props.account.id
@@ -5655,8 +6171,33 @@ const handleSubmit = async () => {
       }
     }
 
-    // For apikey type, handle credentials update
-    if (props.account.type === 'apikey') {
+    // Fish：原生号只更新 api_key（留空保持）；中转号走 base_url + api_key。
+    // 不落通用 apikey 路径——其 base_url 默认值逻辑会把原生号误变成中转号。
+    if (props.account.platform === 'fish' && props.account.type === 'apikey') {
+      const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
+      const newCredentials: Record<string, unknown> = { ...currentCredentials }
+      if (isFishRelayEdit.value) {
+        const newBaseURL = editBaseUrl.value.trim()
+        if (newBaseURL) {
+          newCredentials.base_url = newBaseURL
+        }
+        if (editApiKey.value.trim()) {
+          newCredentials.api_key = editApiKey.value.trim()
+        }
+      } else {
+        const newToken = fishTokenEdit.value.trim()
+        if (newToken) {
+          newCredentials.api_key = newToken
+        }
+      }
+      const fishMapping = buildModelRestrictionMapping()
+      if (fishMapping) {
+        newCredentials.model_mapping = fishMapping
+      } else {
+        delete newCredentials.model_mapping
+      }
+      updatePayload.credentials = newCredentials
+    } else if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       // Kiro API Key 账号直连 AWS,base_url 可选;其余平台留空时回落到默认上游。
       const newBaseUrl = props.account.platform === 'kiro'
@@ -5985,7 +6526,7 @@ const handleSubmit = async () => {
     }
 
     // OpenAI/Grok OAuth: persist model mapping to credentials
-    if ((props.account.platform === 'openai' || props.account.platform === 'grok') && props.account.type === 'oauth') {
+    if ((props.account.platform === 'openai' || props.account.platform === 'grok') && (props.account.type === 'oauth' || props.account.type === 'bps-oauth')) {
       const currentCredentials = isSparkShadow.value
         ? {}
         : (updatePayload.credentials as Record<string, unknown>) ||
@@ -6039,6 +6580,13 @@ const handleSubmit = async () => {
       const unitPrice = Number(leonardoCreditUnitPriceUsd.value ?? 0)
       newExtra.leonardo_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
       updatePayload.extra = applyLeonardoImageLimitsToExtra(newExtra, leonardoImageLimits.value)
+    }
+
+    // Fish 原生号的最大质量。中转号原样转发，不写这个上限。
+    if (props.account.platform === 'fish' && props.account.type === 'apikey' && !isFishRelayEdit.value) {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      updatePayload.extra = applyFishMaxQualityToExtra({ ...currentExtra }, fishMaxQuality.value)
     }
 
     // Grok OAuth: 自定义上游地址 + 请求头覆写。base_url 仅改写转发端点，
@@ -6303,26 +6851,7 @@ const handleSubmit = async () => {
           newExtra.web_search_emulation = webSearchEmulationMode.value
         }
 		}
-		if (autoPause5hThreshold.value != null && autoPause5hThreshold.value > 0) {
-			newExtra.auto_pause_5h_threshold = autoPause5hThreshold.value / 100
-		} else {
-			delete newExtra.auto_pause_5h_threshold
-		}
-		if (autoPause7dThreshold.value != null && autoPause7dThreshold.value > 0) {
-			newExtra.auto_pause_7d_threshold = autoPause7dThreshold.value / 100
-		} else {
-			delete newExtra.auto_pause_7d_threshold
-		}
-		if (autoPause5hDisabled.value) {
-			newExtra.auto_pause_5h_disabled = true
-		} else {
-			delete newExtra.auto_pause_5h_disabled
-		}
-		if (autoPause7dDisabled.value) {
-			newExtra.auto_pause_7d_disabled = true
-		} else {
-			delete newExtra.auto_pause_7d_disabled
-		}
+		applyOpenAIAutoPauseExtra(newExtra)
 		if (props.account.type === 'oauth' && !isSparkShadow.value) {
 			newExtra.auto_reset_credit_enabled = autoResetCreditEnabled.value
 			newExtra.auto_reset_credit_5h_threshold = autoResetCredit5hThreshold.value / 100
@@ -6387,8 +6916,28 @@ const handleSubmit = async () => {
       updatePayload.extra = newExtra
     }
 
-    // For apikey/bedrock accounts, handle quota_limit in extra
-    if (props.account.type === 'apikey' || props.account.type === 'bedrock') {
+    // BPS-only（BPS OAuth）账号：只保存 BPS 设置、长上下文计费与自动暂停，不写任何 Codex 专属设置。
+    if (props.account.platform === 'openai' && props.account.type === 'bps-oauth') {
+      const newExtra: Record<string, unknown> = { ...((props.account.extra as Record<string, unknown>) || {}) }
+      newExtra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+      // 可服务的模型只看通用模型限制（credentials.model_mapping），清掉旧版单独的 BPS 白名单。
+      delete newExtra.openai_excel_bps_models
+      if (excelBPSIgnoreEncryptedContent.value) {
+        newExtra.openai_excel_bps_ignore_encrypted_content = true
+      } else {
+        delete newExtra.openai_excel_bps_ignore_encrypted_content
+      }
+      if (excelBPSCacheCreationAsInput.value) {
+        newExtra.openai_excel_bps_cache_creation_as_input = true
+      } else {
+        delete newExtra.openai_excel_bps_cache_creation_as_input
+      }
+      applyOpenAIAutoPauseExtra(newExtra)
+      updatePayload.extra = newExtra
+    }
+
+    // For apikey/bedrock/service_account accounts, handle quota_limit in extra
+    if (supportsAccountQuota(props.account.type)) {
       const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
         (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }

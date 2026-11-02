@@ -211,6 +211,11 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		}
 		changed = true
 	}
+	body, restricted, err := restrictExcelBPSCodexModelsManifest(body, accounts, group)
+	if err != nil {
+		return fmt.Errorf("restrict group BPS capabilities: %w", err)
+	}
+	changed = changed || restricted
 	filtered, retired, err := filterRetiredOpenAIPublicModelsBody(body, accounts, true)
 	if err != nil {
 		return fmt.Errorf("filter retired Codex models: %w", err)
@@ -649,6 +654,9 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 			Description: "Maximum reasoning with automatic task delegation",
 		})
 	}
+	if openai.IsGPT61TerraModelSpelling(modelID) {
+		levels = append([]configuredCodexReasoningLevel{{Effort: "none", Description: "No reasoning"}}, levels...)
+	}
 	return levels
 }
 
@@ -956,7 +964,14 @@ func buildCodexModelsManifestForAccounts(
 			modelMetadata[modelID] = metadata
 		}
 	}
-	return buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
+	body, err := buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
+	if err != nil || effectivePlatform != PlatformOpenAI {
+		return body, err
+	}
+	// Conflicting aliases can intentionally omit synced metadata. Do not let
+	// the bundled defaults reintroduce v2 for a possible BPS route.
+	body, _, err = restrictExcelBPSCodexModelsManifest(body, accounts, group)
+	return body, err
 }
 
 func buildCodexModelsManifest(
@@ -1694,12 +1709,24 @@ func (c *openAIModelsCache) set(key string, manifest *OpenAIModelsResponse, now 
 // passed through verbatim. Custom API key manifests receive only the narrowly
 // scoped compatibility adjustments required by custom-provider Codex clients.
 func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*OpenAIModelsResponse, error) {
+	// BPS-only accounts get a manifest of their configured models; nothing is fetched.
+	if account != nil && account.IsExcelBPSEnabled() {
+		return excelBPSCodexManifest(account, ifNoneMatch)
+	}
+	return s.fetchNativeCodexModelsManifest(ctx, account, clientVersion, ifNoneMatch)
+}
+
+// fetchNativeCodexModelsManifest is the non-BPS manifest source.
+func (s *OpenAIGatewayService) fetchNativeCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*OpenAIModelsResponse, error) {
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
 	}
 	credAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_CREDENTIALS_FAILED", "resolve credential account: %v", err)
+	}
+	if credAccount.IsBPSOAuth() {
+		return nil, errExcelOAuthRouteUnavailable
 	}
 
 	clientVersion = strings.TrimSpace(clientVersion)
@@ -1890,9 +1917,13 @@ func (s *OpenAIGatewayService) fetchCachedOpenAIModels(ctx context.Context, requ
 
 func (s *OpenAIGatewayService) refreshCachedOpenAIModels(cacheKey string, request openAIModelsRequest, fetch func(ctx context.Context, ifNoneMatch string) (*OpenAIModelsResponse, error)) <-chan singleflight.Result {
 	return s.openAIModelsCache.refresh.DoChan(cacheKey, func() (any, error) {
+		cached, state := s.openAIModelsCache.get(cacheKey, time.Now())
+		// 调用方读缓存之后、进入 singleflight 之前，上一轮刷新可能已写入新鲜结果：直接复用，不重复请求上游。
+		if state == openAIModelsCacheFresh {
+			return cached, nil
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), codexModelsManifestRequestTimeout)
 		defer cancel()
-		cached, _ := s.openAIModelsCache.get(cacheKey, time.Now())
 		ifNoneMatch := ""
 		if cached != nil {
 			ifNoneMatch = cached.upstreamETag

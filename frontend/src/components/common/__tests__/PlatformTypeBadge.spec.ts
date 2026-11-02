@@ -20,6 +20,30 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.find('[data-testid="platform-telemetry-badge"]').exists()).toBe(false)
   })
 
+  it('labels BPS OAuth accounts as their own type', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'bps-oauth'
+      }
+    })
+
+    expect(wrapper.text()).toContain('BPS OAuth')
+    expect(wrapper.text()).not.toContain('bps-oauth')
+  })
+
+  it('shows the privacy badge on OpenAI BPS OAuth accounts', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'bps-oauth',
+        privacyMode: 'training_off'
+      }
+    })
+
+    expect(wrapper.text()).toContain('Private')
+  })
+
   it('uses Kiro theme instead of Anthropic orange theme', () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {
@@ -59,5 +83,33 @@ describe('PlatformTypeBadge', () => {
     })
 
     expect(wrapper.find('[data-testid="platform-telemetry-badge"]').exists()).toBe(false)
+  })
+
+  it('shows Leonardo plan badge with brand indigo theme', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'leonardo',
+        type: 'oauth',
+        planType: 'Ultimate'
+      }
+    })
+
+    expect(wrapper.text()).toContain('Ultimate')
+    expect(wrapper.html()).toContain('bg-indigo-100')
+    expect(wrapper.html()).toContain('text-indigo-700')
+  })
+
+  it('keeps Leonardo free plan on muted gray', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'leonardo',
+        type: 'oauth',
+        planType: 'Free'
+      }
+    })
+
+    expect(wrapper.text()).toContain('Free')
+    expect(wrapper.html()).toContain('bg-gray-100')
+    expect(wrapper.html()).not.toContain('bg-indigo-100')
   })
 })

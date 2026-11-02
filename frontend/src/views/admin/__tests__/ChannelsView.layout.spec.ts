@@ -201,6 +201,9 @@ describe('ChannelsView 弹框布局', () => {
       if (model === 'gpt-5.6-luna') {
         return { found: true, input_price: 0.0000002, output_price: 0.0000012, cache_write_price: 0.00000025, cache_read_price: 0.00000002 }
       }
+      if (model === 'kimi-k3') {
+        return { found: true, input_price: 0.000003, output_price: 0.000015, cache_write_price: 0.00000375, cache_read_price: 0.0000003 }
+      }
       if (model === 'codex-auto-review') {
         return { found: true, input_price: 0.0000002, output_price: 0.0000012, cache_write_price: 0.00000025, cache_read_price: 0.00000002 }
       }
@@ -272,6 +275,7 @@ describe('ChannelsView 弹框布局', () => {
     expect(getModelDefaultPricing).toHaveBeenCalledWith('gpt-5.6-sol')
     expect(getModelDefaultPricing).toHaveBeenCalledWith('gpt-5.6-terra')
     expect(getModelDefaultPricing).toHaveBeenCalledWith('gpt-5.6-luna')
+    expect(getModelDefaultPricing).toHaveBeenCalledWith('kimi-k3')
     expect(getModelDefaultPricing).toHaveBeenCalledWith('codex-auto-review')
     expect(getModelDefaultPricing).toHaveBeenCalledWith('claude-opus-4-8')
     expect(getModelDefaultPricing).toHaveBeenCalledWith('claude-opus-4-8-thinking')
@@ -286,11 +290,13 @@ describe('ChannelsView 弹框布局', () => {
     expect(pricingCards[1].find('.pricing-input-price').text()).toBe('2')
     expect(pricingCards[2].find('.pricing-models').text()).toBe('gpt-5.6-luna')
     expect(pricingCards[2].find('.pricing-input-price').text()).toBe('0.2')
-    expect(pricingCards[3].find('.pricing-models').text()).toBe('codex-auto-review')
-    expect(pricingCards[3].find('.pricing-input-price').text()).toBe('0.2')
-    expect(pricingCards[4].find('.pricing-models').text()).toBe('claude-opus-4-8')
-    expect(pricingCards[4].find('.pricing-input-price').text()).toBe('1')
-    expect(pricingCards[5].find('.pricing-models').text()).toBe('claude-opus-4-8-thinking')
-    expect(pricingCards[5].find('.pricing-input-price').text()).toBe('2')
+    expect(pricingCards[3].find('.pricing-models').text()).toBe('kimi-k3')
+    expect(pricingCards[3].find('.pricing-input-price').text()).toBe('3')
+    expect(pricingCards[4].find('.pricing-models').text()).toBe('codex-auto-review')
+    expect(pricingCards[4].find('.pricing-input-price').text()).toBe('0.2')
+    expect(pricingCards[5].find('.pricing-models').text()).toBe('claude-opus-4-8')
+    expect(pricingCards[5].find('.pricing-input-price').text()).toBe('1')
+    expect(pricingCards[6].find('.pricing-models').text()).toBe('claude-opus-4-8-thinking')
+    expect(pricingCards[6].find('.pricing-input-price').text()).toBe('2')
   })
 })

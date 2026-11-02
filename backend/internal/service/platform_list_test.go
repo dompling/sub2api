@@ -10,19 +10,17 @@ import (
 )
 
 // 以下为重构前各处手写的平台列表 / switch，作为平台清单派生结果的等价基准；
-// 重构后新登记的平台（Command Code、Cline）按同类平台（OpenCode）的位置补入。
+// 重构后新登记的平台按平台清单的位置补入。
 var (
 	legacyAllPlatforms = []string{
-		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformGrok,
-		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe,
-		PlatformCommandCode,
-		PlatformCline,
+		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformKiro, PlatformGrok,
+		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCodeBuddy, PlatformTypeSafe,
+		PlatformCommandCode, PlatformCline, PlatformLeonardo, PlatformFish,
 	}
 	legacySchedulerSnapshotPlatforms = []string{
-		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok,
-		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe,
-		PlatformCommandCode,
-		PlatformCline,
+		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok,
+		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCodeBuddy, PlatformTypeSafe,
+		PlatformCommandCode, PlatformCline, PlatformLeonardo, PlatformFish,
 	}
 	legacyCompositeMatchingPlatforms = legacySchedulerSnapshotPlatforms
 	legacyMultiProtocolProviders     = []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline}
@@ -39,12 +37,12 @@ func legacyIsCNProvider(platform string) bool {
 }
 
 func legacyIsOpenAICompatible(platform string) bool {
-	return platform == PlatformOpenAI || platform == PlatformGrok || legacyIsCNProvider(platform) || platform == PlatformOpenCodeGo || platform == PlatformCommandCode || platform == PlatformCline
+	return platform == PlatformOpenAI || platform == PlatformGrok || legacyIsCNProvider(platform) || platform == PlatformOpenCodeGo || platform == PlatformCodeBuddy || platform == PlatformCommandCode || platform == PlatformCline || platform == PlatformFish
 }
 
 func legacyNormalizeOpenAICompatiblePlatform(platform string) string {
 	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline:
+	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCodeBuddy, PlatformCommandCode, PlatformCline, PlatformFish:
 		return platform
 	}
 	return PlatformOpenAI
@@ -55,9 +53,9 @@ func legacyIsUpstreamBillingProbeIdentity(platform, accountType string) bool {
 		return false
 	}
 	switch platform {
-	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok,
+	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformKiro, PlatformGrok,
 		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo,
-		PlatformTypeSafe, PlatformCommandCode, PlatformCline:
+		PlatformCodeBuddy, PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformLeonardo, PlatformFish:
 		return true
 	}
 	return false

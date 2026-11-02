@@ -159,7 +159,7 @@ func TestApplyOAuthCredentialsPreservesExistingNonAuthCredentials(t *testing.T) 
 			"cookie":        "must-not-survive",
 		},
 	}
-	handler := NewAccountHandler(stub, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	handler := NewAccountHandler(stub, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	router := gin.New()
 	router.POST("/accounts/:id/apply-oauth-credentials", handler.ApplyOAuthCredentials)
 	recorder := httptest.NewRecorder()

@@ -72,6 +72,7 @@ func ProvideAuthService(
 	defaultSubAssigner DefaultSubscriptionAssigner,
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	mcpOAuthService *MCPOAuthService,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -90,6 +91,9 @@ func ProvideAuthService(
 	)
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
+	if mcpOAuthService != nil {
+		svc.SetMCPGrantRevoker(mcpOAuthService)
+	}
 	return svc
 }
 
@@ -349,6 +353,25 @@ func ProvideCNProviderBalanceCheckService(
 	return svc
 }
 
+// ProvideFishQuotaSweepService 构造并启动 fish 周期配额巡检任务。
+// 每轮对全部 active 的 fish token 号拉一次 entitlements（复用用量服务的缓存/
+// singleflight/代理路由），看到每日出图次数耗尽即落冷却到重置时刻——不依赖
+// 请求流量和管理端看列表。
+// 间隔取自 gateway.fish.quota_sweep_interval_minutes；<=0 或未配置时不启动。
+func ProvideFishQuotaSweepService(
+	accountRepo AccountRepository,
+	usage *AccountUsageService,
+	cfg *config.Config,
+) *FishQuotaSweepService {
+	minutes := 0
+	if cfg != nil && cfg.Gateway.Fish.QuotaSweepIntervalMinutes > 0 {
+		minutes = cfg.Gateway.Fish.QuotaSweepIntervalMinutes
+	}
+	svc := NewFishQuotaSweepService(accountRepo, usage, time.Duration(minutes)*time.Minute)
+	svc.Start()
+	return svc
+}
+
 // ProvideGeminiTokenProvider creates GeminiTokenProvider with OAuthRefreshAPI injection
 func ProvideGeminiTokenProvider(
 	accountRepo AccountRepository,
@@ -390,6 +413,12 @@ func ProvideKiroTokenProvider(
 	p.SetRefreshAPI(refreshAPI, executor)
 	p.SetRefreshPolicy(GeminiProviderRefreshPolicy())
 	return p
+}
+
+// ProvideFishImageService 构造 fish.audio 出图服务；对象存储由设置服务动态
+// 决定，与 Leonardo 出图共用同一 resolver。
+func ProvideFishImageService(settings *ImageStorageSettingService) *FishImageService {
+	return NewFishImageService(settings.Resolver())
 }
 
 // ProvideLeonardoImageService 构造 Leonardo 出图服务；对象存储由设置服务动态
@@ -913,8 +942,9 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 }
 
 // ProvideSettingService wires SettingService with group reader and proxy repo.
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+func ProvideSettingService(scopedKeys ScopedAdminKeyRepository, settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
+	svc.scopedAdminKeyRepo = scopedKeys
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
@@ -1041,6 +1071,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAuthService,
 	NewPasskeyService,
 	NewUserService,
+	NewMCPOAuthService,
 	ProvideAPIKeyService,
 	ProvideAPIKeyAuthCacheInvalidator,
 	ProvideAuthCacheInvalidationWorker,
@@ -1085,6 +1116,7 @@ var ProviderSet = wire.NewSet(
 	ProvideKiroTokenProvider,
 	ProvideLeonardoTokenProvider,
 	ProvideLeonardoImageService,
+	ProvideFishImageService,
 	ProvideKiroCooldownStore,
 	NewGeminiMessagesCompatService,
 	ProvideAntigravityTokenProvider,
@@ -1102,6 +1134,7 @@ var ProviderSet = wire.NewSet(
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
 	ProvideAccountUsageService,
+	ProvideFishQuotaSweepService,
 	ProvideAccountTestService,
 	ProvideUpstreamBillingProbeService,
 	ProvideOllamaCloudUsageService,

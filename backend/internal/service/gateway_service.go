@@ -648,7 +648,11 @@ type ForwardResult struct {
 	ServiceTier *string
 
 	// 图片生成计费字段（图片生成模型使用）
-	ImageCount         int    // 生成的图片数量
+	ImageCount int // 生成的图片数量
+	// ImageEndpoint 标记请求来自专用图片端点（/v1/images/*、图片模型端点）。
+	// 分组 image_count_billing 开关只对这类请求生效，混合的 Responses/Chat/WS
+	// 请求带图片工具时仍按 token 计费。
+	ImageEndpoint      bool
 	ImageSize          string // 最终计费尺寸 "1K", "2K", "4K"
 	ImageInputSize     string // 请求中的原始图片尺寸
 	ImageOutputSize    string // 上游响应中的图片尺寸
@@ -733,9 +737,17 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 
 // ShouldReportAccountScheduleFailure prevents provider- and request-scoped
 // credential failures from being misattributed to the selected account. Legacy
-// and inference failures retain their existing scheduler-health behavior.
+// and inference failures retain their existing scheduler-health behavior,
+// except the Excel BPS failovers that only say this BPS account cannot serve
+// this request right now (its BPS route or this model is cooling down, the
+// request has no BPS route, or BPS cannot carry its images); they say nothing
+// about the account's health.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
 	if e == nil {
+		return false
+	}
+	switch e.Reason {
+	case ExcelBPSRateLimitedReason, ExcelBPSModelNotAllowedReason, ExcelOAuthRouteUnavailableReason, BPSUnsupportedInboundReason, ExcelBPSImageUnsupportedReason:
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount
@@ -774,46 +786,47 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 
 // GatewayService handles API gateway operations
 type GatewayService struct {
-	accountRepo           AccountRepository
-	groupRepo             GroupRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	userGroupRateRepo     UserGroupRateRepository
-	cache                 GatewayCache
-	digestStore           *DigestSessionStore
-	cfg                   *config.Config
-	schedulerSnapshot     *SchedulerSnapshotService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	identityService       *IdentityService
-	httpUpstream          HTTPUpstream
-	deferredService       *DeferredService
-	concurrencyService    *ConcurrencyService
-	claudeTokenProvider   *ClaudeTokenProvider
-	kiroTokenProvider     *KiroTokenProvider
-	kiroCooldownStore     KiroCooldownStore
-	sessionLimitCache     SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
-	rpmCache              RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
-	userGroupRateResolver *userGroupRateResolver
-	userGroupRateCache    *gocache.Cache
-	userGroupRateSF       singleflight.Group
-	modelsListCache       *gocache.Cache
-	modelsListCacheTTL    time.Duration
-	settingService        *SettingService
-	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
-	debugModelRouting     atomic.Bool
-	debugClaudeMimic      atomic.Bool
-	channelService        *ChannelService
-	resolver              *ModelPricingResolver
-	compositeResolver     *CompositeRouteResolver
-	debugGatewayBodyFile  atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
-	tlsFPProfileService   *TLSFingerprintProfileService
-	balanceNotifyService  *BalanceNotifyService
-	userPlatformQuotaRepo UserPlatformQuotaRepository
-	leonardoTokenProvider *LeonardoTokenProvider
+	accountRepo              AccountRepository
+	groupRepo                GroupRepository
+	usageLogRepo             UsageLogRepository
+	usageBillingRepo         UsageBillingRepository
+	userRepo                 UserRepository
+	userSubRepo              UserSubscriptionRepository
+	userGroupRateRepo        UserGroupRateRepository
+	cache                    GatewayCache
+	digestStore              *DigestSessionStore
+	cfg                      *config.Config
+	schedulerSnapshot        *SchedulerSnapshotService
+	billingService           *BillingService
+	rateLimitService         *RateLimitService
+	billingCacheService      *BillingCacheService
+	identityService          *IdentityService
+	httpUpstream             HTTPUpstream
+	deferredService          *DeferredService
+	concurrencyService       *ConcurrencyService
+	claudeTokenProvider      *ClaudeTokenProvider
+	kiroTokenProvider        *KiroTokenProvider
+	kiroCooldownStore        KiroCooldownStore
+	kiroCacheEmulationRemote KiroCacheEmulationRemoteStore // Kiro 缓存模拟跨节点共享存储；nil = 纯内存
+	sessionLimitCache        SessionLimitCache             // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
+	rpmCache                 RPMCache                      // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
+	userGroupRateResolver    *userGroupRateResolver
+	userGroupRateCache       *gocache.Cache
+	userGroupRateSF          singleflight.Group
+	modelsListCache          *gocache.Cache
+	modelsListCacheTTL       time.Duration
+	settingService           *SettingService
+	responseHeaderFilter     *responseheaders.CompiledHeaderFilter
+	debugModelRouting        atomic.Bool
+	debugClaudeMimic         atomic.Bool
+	channelService           *ChannelService
+	resolver                 *ModelPricingResolver
+	compositeResolver        *CompositeRouteResolver
+	debugGatewayBodyFile     atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
+	tlsFPProfileService      *TLSFingerprintProfileService
+	balanceNotifyService     *BalanceNotifyService
+	userPlatformQuotaRepo    UserPlatformQuotaRepository
+	leonardoTokenProvider    *LeonardoTokenProvider
 }
 
 // NewGatewayService creates a new GatewayService
@@ -839,6 +852,7 @@ func NewGatewayService(
 	kiroTokenProvider *KiroTokenProvider,
 	leonardoTokenProvider *LeonardoTokenProvider,
 	kiroCooldownStore KiroCooldownStore,
+	kiroCacheEmulationRemote KiroCacheEmulationRemoteStore,
 	sessionLimitCache SessionLimitCache,
 	rpmCache RPMCache,
 	digestStore *DigestSessionStore,
@@ -854,41 +868,42 @@ func NewGatewayService(
 	modelsListTTL := resolveModelsListCacheTTL(cfg)
 
 	svc := &GatewayService{
-		accountRepo:           accountRepo,
-		groupRepo:             groupRepo,
-		usageLogRepo:          usageLogRepo,
-		usageBillingRepo:      usageBillingRepo,
-		userRepo:              userRepo,
-		userSubRepo:           userSubRepo,
-		userGroupRateRepo:     userGroupRateRepo,
-		cache:                 cache,
-		digestStore:           digestStore,
-		cfg:                   cfg,
-		schedulerSnapshot:     schedulerSnapshot,
-		concurrencyService:    concurrencyService,
-		billingService:        billingService,
-		rateLimitService:      rateLimitService,
-		billingCacheService:   billingCacheService,
-		identityService:       identityService,
-		httpUpstream:          httpUpstream,
-		deferredService:       deferredService,
-		claudeTokenProvider:   claudeTokenProvider,
-		kiroTokenProvider:     kiroTokenProvider,
-		kiroCooldownStore:     kiroCooldownStore,
-		sessionLimitCache:     sessionLimitCache,
-		rpmCache:              rpmCache,
-		userGroupRateCache:    gocache.New(userGroupRateTTL, time.Minute),
-		settingService:        settingService,
-		modelsListCache:       gocache.New(modelsListTTL, time.Minute),
-		modelsListCacheTTL:    modelsListTTL,
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		tlsFPProfileService:   tlsFPProfileService,
-		channelService:        channelService,
-		resolver:              resolver,
-		compositeResolver:     compositeResolver,
-		balanceNotifyService:  balanceNotifyService,
-		userPlatformQuotaRepo: userPlatformQuotaRepo,
-		leonardoTokenProvider: leonardoTokenProvider,
+		accountRepo:              accountRepo,
+		groupRepo:                groupRepo,
+		usageLogRepo:             usageLogRepo,
+		usageBillingRepo:         usageBillingRepo,
+		userRepo:                 userRepo,
+		userSubRepo:              userSubRepo,
+		userGroupRateRepo:        userGroupRateRepo,
+		cache:                    cache,
+		digestStore:              digestStore,
+		cfg:                      cfg,
+		schedulerSnapshot:        schedulerSnapshot,
+		concurrencyService:       concurrencyService,
+		billingService:           billingService,
+		rateLimitService:         rateLimitService,
+		billingCacheService:      billingCacheService,
+		identityService:          identityService,
+		httpUpstream:             httpUpstream,
+		deferredService:          deferredService,
+		claudeTokenProvider:      claudeTokenProvider,
+		kiroTokenProvider:        kiroTokenProvider,
+		kiroCooldownStore:        kiroCooldownStore,
+		kiroCacheEmulationRemote: kiroCacheEmulationRemote,
+		sessionLimitCache:        sessionLimitCache,
+		rpmCache:                 rpmCache,
+		userGroupRateCache:       gocache.New(userGroupRateTTL, time.Minute),
+		settingService:           settingService,
+		modelsListCache:          gocache.New(modelsListTTL, time.Minute),
+		modelsListCacheTTL:       modelsListTTL,
+		responseHeaderFilter:     compileResponseHeaderFilter(cfg),
+		tlsFPProfileService:      tlsFPProfileService,
+		channelService:           channelService,
+		resolver:                 resolver,
+		compositeResolver:        compositeResolver,
+		balanceNotifyService:     balanceNotifyService,
+		userPlatformQuotaRepo:    userPlatformQuotaRepo,
+		leonardoTokenProvider:    leonardoTokenProvider,
 	}
 	if svc.leonardoTokenProvider == nil {
 		svc.leonardoTokenProvider = NewLeonardoTokenProvider(accountRepo, nil)
@@ -1586,6 +1601,20 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		accounts = filtered
 	}
 
+	// BPS-only accounts serve only their configured models (mapping keys, or the
+	// BPS defaults), so they contribute those instead of the native defaults.
+	// Without one, the listing below is unchanged.
+	if platform == PlatformOpenAI {
+		if bpsAccounts := excelBPSOAuthListingAccounts(accounts); len(bpsAccounts) > 0 {
+			models := openAIListingModelsWithExcelBPS(accounts, bpsAccounts)
+			if s.modelsListCache != nil {
+				s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
+				modelsListCacheStoreTotal.Add(1)
+			}
+			return models
+		}
+	}
+
 	// Collect unique models from all accounts
 	modelSet := make(map[string]struct{})
 	hasAnyMapping := false
@@ -1664,6 +1693,62 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	return cloneStringSlice(models)
 }
 
+func excelBPSOAuthListingAccounts(accounts []Account) []*Account {
+	var bps []*Account
+	for i := range accounts {
+		if accounts[i].IsBPSOAuth() {
+			bps = append(bps, &accounts[i])
+		}
+	}
+	return bps
+}
+
+// openAIListingModelsWithExcelBPS lists an OpenAI pool holding BPS-only
+// accounts: the native accounts contribute exactly what they would as a pool
+// of their own (the default catalog when none has a mapping), and each BPS-only
+// account its configured models. The result is always explicit, never "use
+// defaults".
+func openAIListingModelsWithExcelBPS(accounts []Account, bpsAccounts []*Account) []string {
+	natives := make([]Account, 0, len(accounts)-len(bpsAccounts))
+	for i := range accounts {
+		if !accounts[i].IsBPSOAuth() {
+			natives = append(natives, accounts[i])
+		}
+	}
+	models := nativeOpenAIListingModels(natives)
+	for _, account := range bpsAccounts {
+		models = append(models, excelBPSConfiguredModelIDs(account)...)
+	}
+	return dedupeAndSortModelIDs(models)
+}
+
+// nativeOpenAIListingModels mirrors GetAvailableModels for an OpenAI pool
+// without BPS-only accounts, with "use defaults" expanded to the default IDs.
+func nativeOpenAIListingModels(accounts []Account) []string {
+	if len(accounts) == 0 {
+		return nil
+	}
+	modelSet := make(map[string]struct{})
+	for i := range accounts {
+		if accounts[i].IsOpenAIPassthroughEnabled() {
+			continue
+		}
+		for model := range accounts[i].GetModelMapping() {
+			modelSet[model] = struct{}{}
+		}
+	}
+	if len(modelSet) == 0 {
+		return filterRetiredOpenAIModelIDs(accounts, openai.DefaultModelIDs())
+	}
+	models := make([]string, 0, len(modelSet))
+	for model := range modelSet {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	models = supplementUnmappedOpenAIModels(accounts, models)
+	return filterRetiredOpenAIModelIDs(accounts, models)
+}
+
 func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, groupID int64, model string) (CompositeModelOwnership, error) {
 	model = strings.TrimSpace(model)
 	if s == nil || s.accountRepo == nil || groupID <= 0 || model == "" {
@@ -1695,7 +1780,7 @@ func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, gro
 		}
 		platforms[platform] = struct{}{}
 		ownership.OpenAIGatewayOAuthClaimed = ownership.OpenAIGatewayOAuthClaimed ||
-			(account.IsOAuth() && domain.UsesOpenAIGateway(platform))
+			((account.IsOAuth() || account.IsBPSOAuth()) && domain.UsesOpenAIGateway(platform))
 	}
 
 	if len(platforms) == 1 {
