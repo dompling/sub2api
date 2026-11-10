@@ -67,6 +67,10 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 	"upstream_billing_probe",
 	"upstream_billing_rate_sync",
 	"ollama_cloud_usage",
+	// fish 钱包余额观测：每次出图/402/巡检都会写，属于观测型。选号要读它，
+	// 所以在 filterSchedulerExtra 里投影；UpdateExtra 同步刷新单账号快照，
+	// 不需要事务 + outbox + 整桶重建。
+	"fish_wallet_",
 }
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
@@ -2166,7 +2170,7 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.BindGroups(ctx, accountID, groupIDs)
 	}
-	if adminaccess.FromContext(ctx) != nil {
+	if adminaccess.RestrictedFromContext(ctx) != nil {
 		return r.scopedAdminBindGroups(ctx, accountID, groupIDs)
 	}
 	existingGroupIDs, err := r.loadAccountGroupIDs(ctx, accountID)

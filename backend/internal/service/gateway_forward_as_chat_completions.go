@@ -125,6 +125,9 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		cachePlan := s.prepareKiroChatCompletionsCacheEmulationUsage(ctx, account, group, body, mappedModel, estimateKiroInputTokens(ctx, s.kiroMeteringAlgorithm(ctx), anthropicBody))
 		resp, _, err = s.openKiroAnthropicStreamResponse(ctx, account, parsed, anthropicBody, mappedModel, originalModel, c.Request.Header, group, cachePlan)
 		if err != nil {
+			if failoverErr := kiroFailoverFromOpenErr(c, account, err); failoverErr != nil {
+				return nil, failoverErr
+			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -135,11 +138,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
-			if msg, ok := kiroPayloadTooLargeMessage(err); ok {
-				writeGatewayCCError(c, http.StatusBadRequest, "invalid_request_error", msg)
-			} else {
-				writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream request failed")
-			}
+			writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream request failed")
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 		}
 	} else {
@@ -210,6 +209,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			}
 		}
 
+		if account.Platform == PlatformKiro {
+			if fixed, ok := kiroContextLengthClientMessage(resp.StatusCode, respBody); ok {
+				writeGatewayCCError(c, http.StatusBadRequest, "invalid_request_error", fixed)
+				return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
+			}
+		}
 		writeGatewayCCError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
@@ -275,9 +280,11 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	scanner.Split(newBoundedSSESplit(s.cfg, maxLineSize, nil))
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	streamStatus := &anthropicCompatStream{body: resp.Body}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -298,6 +305,11 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
+		}
+
+		streamStatus.observe(&event, payload)
+		if streamStatus.upstreamErrType != "" {
+			break
 		}
 
 		// message_start carries the initial response structure and cache usage
@@ -341,6 +353,17 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 				zap.String("request_id", requestID),
 			)
 		}
+	}
+
+	streamStatus.readErr = scanner.Err()
+	if failure := streamStatus.failure(); failure != nil {
+		_ = resp.Body.Close()
+		writeGatewayCCError(c, http.StatusBadGateway, "server_error", failure.message)
+		return &ForwardResult{
+			RequestID: requestID, UpstreamHeaders: resp.Header, Usage: usage,
+			Model: originalModel, UpstreamModel: mappedModel, ReasoningEffort: reasoningEffort,
+			Duration: time.Since(startTime),
+		}, failure.err
 	}
 
 	if finalResp == nil {

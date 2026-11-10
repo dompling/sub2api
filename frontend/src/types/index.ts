@@ -1497,6 +1497,19 @@ export interface UsageProgress {
 }
 
 // Antigravity 单个模型的配额信息
+export interface AntigravityQuotaWindow {
+  window: string // '5h' or 'weekly'
+  utilization: number // 0-100
+  resets_at: string | null
+}
+
+export interface AntigravityQuotaGroup {
+  key: string // bucket prefix: 'gemini' or '3p' (Claude and GPT)
+  name: string
+  description?: string
+  windows: AntigravityQuotaWindow[]
+}
+
 export interface AntigravityModelQuota {
   utilization: number // 使用率 0-100
   reset_time: string  // 重置时间 ISO8601
@@ -1508,6 +1521,28 @@ export interface KiroCreditProgress {
   percentage_used: number
   days_remaining?: number
   expiry_date?: string | null
+}
+
+// Kiro bonuses[] 中的一条赠送额度（兑换码/活动）
+export interface KiroBonusProgress {
+  name?: string
+  status?: string // ACTIVE | EXHAUSTED
+  bonus_code?: string
+  description?: string
+  current_usage: number
+  usage_limit: number
+  percentage_used: number
+  days_remaining?: number
+  expiry_date?: string | null
+  redeemed_at?: string | null
+}
+
+// Kiro 账号的超刷（overage）状态：超额用量与产生的费用
+export interface KiroOverageInfo {
+  current_overages: number
+  overage_charges: number
+  currency_code?: string
+  currency_symbol?: string
 }
 
 // Leonardo 积分余额快照：上游只给各池剩余量，上限来自套餐常量表（未知套餐时为 0）
@@ -1580,6 +1615,8 @@ export interface AccountUsageInfo {
   gemini_pro_minute?: UsageProgress | null
   gemini_flash_minute?: UsageProgress | null
   antigravity_quota?: Record<string, AntigravityModelQuota> | null
+  // Per-group 5-hour and weekly windows (retrieveUserQuotaSummary); every model of a group shares them.
+  antigravity_quota_groups?: AntigravityQuotaGroup[] | null
   grok_request_quota?: GrokQuotaWindow | null
   grok_token_quota?: GrokQuotaWindow | null
   grok_retry_after_seconds?: number | null
@@ -1604,8 +1641,11 @@ export interface AccountUsageInfo {
   kiro_subscription_name?: string | null
   kiro_subscription_type?: string | null
   kiro_reset_at?: string | null
+  kiro_overages_enabled?: boolean
   kiro_credit?: KiroCreditProgress | null
   kiro_bonus?: KiroCreditProgress | null
+  kiro_bonuses?: KiroBonusProgress[] | null
+  kiro_overage?: KiroOverageInfo | null
   kiro_quota_state?: string | null
   kiro_quota_reason?: string | null
   kiro_quota_reset_at?: string | null

@@ -30,7 +30,8 @@ const consent: MCPConsent = {
 }
 const redirectURL = `${request.redirect_uri}&code=opaque-code&state=encoded-state`
 const originalLocation = window.location
-const mounted: ReturnType<typeof mount>[] = []
+type Wrapper = ReturnType<typeof mount>
+const mounted: Wrapper[] = []
 function render() {
   const wrapper = mount(MCPOAuthAuthorizeView, { global: { stubs: { Icon: true, RouterLink: true } } })
   mounted.push(wrapper)
@@ -75,6 +76,20 @@ describe('MCP OAuth consent', () => {
     await flushPromises()
     expect(authorize).toHaveBeenCalledWith({ authorization: request, approved: true, scope: 'user', read_only: true })
     expect(assign).toHaveBeenCalledWith(redirectURL)
+  })
+
+  it.each([
+    ['mcp-consent-scope', 'mcp.scope', 'mcp-scope-hint'],
+    ['mcp-consent-permissions', 'mcp.permissions', 'mcp-permissions-hint']
+  ])('keeps %s named by its label and described by its hint', async (id, label, hint) => {
+    const wrapper = render()
+    await flushPromises()
+    const trigger = wrapper.get(`#${id}`)
+    expect(trigger.element.tagName).toBe('BUTTON')
+    expect(trigger.attributes('aria-label')).toBe(label)
+    expect(trigger.attributes('aria-describedby')).toBe(hint)
+    expect(wrapper.get(`label[for="${id}"]`).text()).toBe(label)
+    expect(wrapper.find(`#${hint}`).exists()).toBe(true)
   })
 
   it('allows an omitted OAuth scope without adding or changing request parameters', async () => {

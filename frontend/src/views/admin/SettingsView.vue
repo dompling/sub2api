@@ -1502,6 +1502,9 @@
                 />
               </div>
 
+              <!-- Exact Email Blacklist -->
+              <RegistrationEmailBlacklistEditor />
+
               <!-- Promo Code -->
               <div
                 class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -5321,6 +5324,24 @@
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{ t("admin.settings.gatewayForwarding.kiroTokenizerHint") }}
                 </p>
+              </div>
+
+              <!-- Kiro 缓存模拟分桶 -->
+              <div class="flex items-center justify-between border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.gatewayForwarding.kiroCacheScopeClient") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.kiroCacheScopeClientHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.gateway_kiro_cache_scope_client"
+                  data-testid="gateway-kiro-cache-scope-client"
+                />
               </div>
 
               <!-- Fish 原生号动态尺寸规划：最大裁剪 -->
@@ -9180,6 +9201,7 @@ import {
   type RechargeBonusMode,
   type RechargeBonusTierDraft,
 } from "@/utils/rechargeBonus";
+import RegistrationEmailBlacklistEditor from "@/components/admin/settings/RegistrationEmailBlacklistEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
@@ -10210,6 +10232,7 @@ const form = reactive<SettingsForm>({
   // Gateway forwarding behavior
   openai_ttft_mode: "semantic",
   gateway_kiro_tokenizer: "official",
+  gateway_kiro_cache_scope_client: false,
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -11896,6 +11919,7 @@ async function saveSettings() {
       )
         ? form.gateway_kiro_tokenizer
         : "official",
+      gateway_kiro_cache_scope_client: form.gateway_kiro_cache_scope_client,
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,

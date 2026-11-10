@@ -156,6 +156,8 @@ func (s *GatewayService) ForwardAsResponses(
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
 	var resp *http.Response
+	// compactionRetry 只在 Kiro 压缩请求上设置：上游确认超限后截断工具输出重试一次。
+	var compactionRetry func() (*http.Response, error)
 	if isKiroDirectModeAccount(account) {
 		var group *Group
 		if parsed != nil {
@@ -163,7 +165,17 @@ func (s *GatewayService) ForwardAsResponses(
 		}
 		cachePlan := s.prepareKiroResponsesCacheEmulationUsage(ctx, account, group, body, mappedModel, estimateKiroInputTokens(ctx, s.kiroMeteringAlgorithm(ctx), anthropicBody))
 		resp, _, err = s.openKiroAnthropicStreamResponse(ctx, account, parsed, anthropicBody, mappedModel, originalModel, c.Request.Header, group, cachePlan)
+		if err == nil && isCompact {
+			compactionRetry = newKiroCompactionRetry(anthropicBody, mappedModel, func(retryBody []byte) (*http.Response, error) {
+				retryResp, _, retryErr := s.openKiroAnthropicStreamResponse(ctx, account, parsed, retryBody, mappedModel, originalModel, c.Request.Header, group, cachePlan)
+				return retryResp, retryErr
+			})
+			resp, err = retryKiroCompactionOnContextLength(resp, compactionRetry)
+		}
 		if err != nil {
+			if failoverErr := kiroFailoverFromOpenErr(c, account, err); failoverErr != nil {
+				return nil, failoverErr
+			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -174,11 +186,7 @@ func (s *GatewayService) ForwardAsResponses(
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
-			if msg, ok := kiroPayloadTooLargeMessage(err); ok {
-				writeResponsesError(c, http.StatusBadRequest, "context_length_exceeded", msg)
-			} else {
-				writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream request failed")
-			}
+			writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream request failed")
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 		}
 	} else {
@@ -252,6 +260,16 @@ func (s *GatewayService) ForwardAsResponses(
 		}
 
 		// Non-failover error: return Responses-formatted error to client
+		if account.Platform == PlatformKiro {
+			if fixed, ok := kiroContextLengthClientMessage(resp.StatusCode, respBody); ok {
+				if isCompact {
+					return nil, s.failCompactionWithCode(c, clientStream, http.StatusBadRequest,
+						"context_length_exceeded", kiroCompactionOverflowMessage, resp.Header.Get("x-request-id"))
+				}
+				writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", fixed)
+				return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
+			}
+		}
 		writeResponsesError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
@@ -262,7 +280,7 @@ func (s *GatewayService) ForwardAsResponses(
 	if isCompact {
 		// compact 请求必须缓冲：要拿到完整摘要文本才能合成 Codex 要求的单个
 		// compaction item，逐事件透传做不到。
-		result, handleErr = s.handleResponsesCompactionResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientStream)
+		result, handleErr = s.handleResponsesCompactionResponseWithRetry(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientStream, compactionRetry)
 	} else if clientStream {
 		writerSizeBeforeStream := c.Writer.Size()
 		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
@@ -488,7 +506,17 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	clientToolMapping apicompat.ResponsesClientToolMapping,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
-	finalResp, usage := s.collectAnthropicResponseFromSSE(resp.Body, requestID, nil)
+	finalResp, usage, streamStatus := s.collectAnthropicResponseFromSSE(resp.Body, requestID, nil)
+
+	if failure := streamStatus.failure(); failure != nil {
+		_ = resp.Body.Close()
+		writeResponsesError(c, http.StatusBadGateway, "server_error", failure.message)
+		return &ForwardResult{
+			RequestID: requestID, UpstreamHeaders: resp.Header, Usage: usage,
+			Model: originalModel, UpstreamModel: mappedModel, ReasoningEffort: reasoningEffort,
+			Duration: time.Since(startTime),
+		}, failure.err
+	}
 
 	if finalResp == nil {
 		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
@@ -504,20 +532,22 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 // Anthropic 响应。onEvent 在每个事件解析成功后被调用（可为 nil），供调用方挂载
 // 心跳一类的副作用——compact 请求会借此在漫长的摘要生成期间向下游发送保活字节。
 func (s *GatewayService) collectAnthropicResponseFromSSE(
-	body io.Reader,
+	body io.ReadCloser,
 	requestID string,
 	onEvent func(),
-) (*apicompat.AnthropicResponse, ClaudeUsage) {
+) (*apicompat.AnthropicResponse, ClaudeUsage, *anthropicCompatStream) {
 	scanner := bufio.NewScanner(body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	scanner.Split(newBoundedSSESplit(s.cfg, maxLineSize, nil))
 
 	// Accumulate the final Anthropic response from streaming events
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	streamStatus := &anthropicCompatStream{body: body}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -547,6 +577,11 @@ func (s *GatewayService) collectAnthropicResponseFromSSE(
 		}
 		if onEvent != nil {
 			onEvent()
+		}
+
+		streamStatus.observe(&event, payload)
+		if streamStatus.upstreamErrType != "" {
+			break
 		}
 
 		// message_start carries the initial response structure
@@ -587,6 +622,7 @@ func (s *GatewayService) collectAnthropicResponseFromSSE(
 		}
 	}
 
+	streamStatus.readErr = scanner.Err()
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_responses buffered: read error",
@@ -595,7 +631,7 @@ func (s *GatewayService) collectAnthropicResponseFromSSE(
 			)
 		}
 	}
-	return finalResp, usage
+	return finalResp, usage, streamStatus
 }
 
 // writeResponsesBufferedResult 把聚合好的 Anthropic 响应转成 Responses JSON 写回。

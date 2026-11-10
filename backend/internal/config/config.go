@@ -1047,7 +1047,8 @@ type GatewayConfig struct {
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
 	// OpenAIResponseHeaderTimeout: OpenAI/Codex 上游等待响应头的超时时间（秒），0表示无超时
 	// OpenAI/Codex 请求可能在上游排队较久；默认不使用通用响应头超时截断。
-	OpenAIResponseHeaderTimeout int `mapstructure:"openai_response_header_timeout"`
+	OpenAIResponseHeaderTimeout         int  `mapstructure:"openai_response_header_timeout"`
+	DisableOpenAITransportErrorCooldown bool `mapstructure:"disable_openai_transport_error_cooldown"`
 	// GrokResponseHeaderTimeout bounds the pre-first-byte wait for xAI/Grok.
 	// A zero value uses the provider-safe default instead of the generic gateway timeout.
 	GrokResponseHeaderTimeout int `mapstructure:"grok_response_header_timeout"`
@@ -1058,6 +1059,12 @@ type GatewayConfig struct {
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
+	// RequestBodyMemoryBudgetBytes bounds buffered ingress allocations per instance; 0 disables it.
+	RequestBodyMemoryBudgetBytes int64 `mapstructure:"request_body_memory_budget_bytes"`
+	// RequestBodyReadTimeoutSeconds bounds each socket read during upload; 0 disables it.
+	RequestBodyReadTimeoutSeconds int `mapstructure:"request_body_read_timeout_seconds"`
+	// DownstreamWriteTimeoutSeconds bounds each HTTP write/flush, not the lifetime of a stream.
+	DownstreamWriteTimeoutSeconds int `mapstructure:"downstream_write_timeout_seconds"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
 	TextMaxBodySize int64 `mapstructure:"text_max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -1169,7 +1176,10 @@ type GatewayConfig struct {
 	// 输出 token；Leonardo 不报 token 用量），0 表示不返回 usage
 	LeonardoUsageTokensPerCredit float64 `mapstructure:"leonardo_usage_tokens_per_credit"`
 	// MaxLineSize: 上游 SSE 单行最大字节数（0使用默认值）
-	MaxLineSize int `mapstructure:"max_line_size"`
+	MaxLineSize      int   `mapstructure:"max_line_size"`
+	SSEQueueMaxBytes int64 `mapstructure:"sse_queue_max_bytes"`
+	SSEEventMaxBytes int64 `mapstructure:"sse_event_max_bytes"`
+	SSEEventMaxLines int   `mapstructure:"sse_event_max_lines"`
 
 	// 是否记录上游错误响应体摘要（避免输出请求内容）
 	LogUpstreamErrorBody bool `mapstructure:"log_upstream_error_body"`
@@ -1269,8 +1279,19 @@ type GatewayCNProvidersConfig struct {
 //     每轮对全部 active 的 fish token 号拉一次 entitlements（复用用量服务的
 //     缓存/singleflight/代理路由），看到每日出图次数耗尽即落临时不可调度到
 //     重置时刻——不依赖请求流量和管理端看列表。
+//   - credit_aware_scheduling_enabled: 按钱包余额调度（默认 true）。402
+//     OUT_OF_CREDITS 只说明余额不够这一单：开启时只跳过该账号、不冷却，
+//     选号排除已知付不起的账号并优先用零头，多张图按余额拆批。关闭即回到
+//     「402 一律冷却」的旧行为。
+//   - balance_trust_hours: 钱包余额观测的可信时长（小时，默认 6）。过期的
+//     余额按未知处理（选号放行），等巡检或下一次 402 刷新。
+//   - wallet_refresh_min_interval_seconds: 402 后补查钱包的最短间隔（秒，
+//     默认 600）。窗口内已有观测就不再查，避免 402 风暴打爆钱包接口。
 type GatewayFishConfig struct {
-	QuotaSweepIntervalMinutes int `mapstructure:"quota_sweep_interval_minutes"`
+	QuotaSweepIntervalMinutes       int  `mapstructure:"quota_sweep_interval_minutes"`
+	CreditAwareSchedulingEnabled    bool `mapstructure:"credit_aware_scheduling_enabled"`
+	BalanceTrustHours               int  `mapstructure:"balance_trust_hours"`
+	WalletRefreshMinIntervalSeconds int  `mapstructure:"wallet_refresh_min_interval_seconds"`
 }
 
 type GatewayLiveConfig struct {
@@ -2533,6 +2554,7 @@ func setDefaults() {
 	// Gateway
 	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
+	viper.SetDefault("gateway.disable_openai_transport_error_cooldown", false)
 	viper.SetDefault("gateway.grok_response_header_timeout", 120)
 	viper.SetDefault("gateway.openai_first_output_timeout_seconds", 0)
 	viper.SetDefault("gateway.openai_high_effort_first_output_timeout_seconds", 0)
@@ -2643,6 +2665,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.cn_providers.balance_check_interval_minutes", 10)
 	// fish 渠道周期配额巡检：耗尽号不依赖流量/看列表即可落冷却。
 	viper.SetDefault("gateway.fish.quota_sweep_interval_minutes", 30)
+	// fish 按钱包余额调度：402 只跳过不冷却，选号看余额（关闭回到旧行为）。
+	viper.SetDefault("gateway.fish.credit_aware_scheduling_enabled", true)
+	viper.SetDefault("gateway.fish.balance_trust_hours", 6)
+	viper.SetDefault("gateway.fish.wallet_refresh_min_interval_seconds", 600)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
@@ -2651,6 +2677,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
+	viper.SetDefault("gateway.request_body_memory_budget_bytes", int64(1024*1024*1024))
+	viper.SetDefault("gateway.request_body_read_timeout_seconds", 120)
+	viper.SetDefault("gateway.downstream_write_timeout_seconds", 120)
 	viper.SetDefault("gateway.text_max_body_size", int64(32*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.models_list_read_max_bytes", DefaultModelsListReadMaxBytes)
@@ -2679,6 +2708,9 @@ func setDefaults() {
 	// 对应 Leonardo gpt-image-2 LOW 的 8 / 12 积分。
 	viper.SetDefault("gateway.leonardo_usage_tokens_per_credit", 34)
 	viper.SetDefault("gateway.max_line_size", 500*1024*1024)
+	viper.SetDefault("gateway.sse_queue_max_bytes", int64(8*1024*1024))
+	viper.SetDefault("gateway.sse_event_max_bytes", int64(0))
+	viper.SetDefault("gateway.sse_event_max_lines", 4096)
 	viper.SetDefault("gateway.scheduling.sticky_session_max_waiting", 3)
 	viper.SetDefault("gateway.scheduling.sticky_session_wait_timeout", 120*time.Second)
 	viper.SetDefault("gateway.scheduling.fallback_wait_timeout", 30*time.Second)
@@ -3482,6 +3514,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.MaxBodySize <= 0 {
 		return fmt.Errorf("gateway.max_body_size must be positive")
+	}
+	if c.Gateway.RequestBodyMemoryBudgetBytes < 0 {
+		return fmt.Errorf("gateway.request_body_memory_budget_bytes must be non-negative")
+	}
+	if c.Gateway.RequestBodyReadTimeoutSeconds < 0 || c.Gateway.RequestBodyReadTimeoutSeconds > 3600 {
+		return fmt.Errorf("gateway.request_body_read_timeout_seconds must be between 0 and 3600")
+	}
+	if c.Gateway.DownstreamWriteTimeoutSeconds < 0 || c.Gateway.DownstreamWriteTimeoutSeconds > 3600 {
+		return fmt.Errorf("gateway.downstream_write_timeout_seconds must be between 0 and 3600")
+	}
+	if c.Gateway.SSEQueueMaxBytes < 0 || c.Gateway.SSEEventMaxBytes < 0 || c.Gateway.SSEEventMaxLines < 0 {
+		return fmt.Errorf("gateway.sse_queue_max_bytes, sse_event_max_bytes and sse_event_max_lines must be non-negative")
 	}
 	if c.Gateway.TextMaxBodySize <= 0 || c.Gateway.TextMaxBodySize > c.Gateway.MaxBodySize {
 		return fmt.Errorf("gateway.text_max_body_size must be positive and no greater than gateway.max_body_size")

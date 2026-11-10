@@ -66,15 +66,19 @@ func TestAPIKeyService_RejectsV15AuthSnapshotWithoutReasoningEffortPolicy(t *tes
 	}
 }
 
-// Both forks used v26 for different additions; neither old schema is complete.
-func TestAPIKeyService_RejectsV26AuthSnapshotFromEitherFork(t *testing.T) {
+// Earlier snapshots from both forks lack fields required by the merged schema.
+func TestAPIKeyService_RejectsLegacyAuthSnapshotsFromEitherFork(t *testing.T) {
 	svc := &APIKeyService{}
 	for name, snapshot := range map[string]*APIKeyAuthSnapshot{
 		"local_without_image_billing":    {Version: 26, AllowedModels: []string{"gpt-5"}},
 		"upstream_without_key_allowlist": {Version: 26, Group: &APIKeyAuthGroupSnapshot{ImageCountBilling: true}},
+		"local_v27_without_privacy":      {Version: 27, AllowedModels: []string{"gpt-5"}, Group: &APIKeyAuthGroupSnapshot{ImageCountBilling: true}},
+		"upstream_v28_without_key_allowlist": {Version: 28, Group: &APIKeyAuthGroupSnapshot{
+			ImageCountBilling: true, RequirePrivacySet: true,
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			apiKey, used, err := svc.applyAuthCacheEntry("sk-v26", &APIKeyAuthCacheEntry{Snapshot: snapshot})
+			apiKey, used, err := svc.applyAuthCacheEntry("sk-legacy", &APIKeyAuthCacheEntry{Snapshot: snapshot})
 			require.NoError(t, err)
 			require.False(t, used)
 			require.Nil(t, apiKey)
@@ -82,11 +86,12 @@ func TestAPIKeyService_RejectsV26AuthSnapshotFromEitherFork(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthSnapshotPreservesKeyAllowlistAndImageBilling(t *testing.T) {
+func TestAPIKeyAuthSnapshotPreservesKeyAllowlistImageBillingAndPrivacy(t *testing.T) {
 	svc := &APIKeyService{}
 	apiKey := profitAuthTestAPIKey()
 	apiKey.AllowedModels = []string{"gpt-5"}
 	apiKey.Group.ImageCountBilling = true
+	apiKey.Group.RequirePrivacySet = true
 
 	payload, err := json.Marshal(&APIKeyAuthCacheEntry{Snapshot: svc.snapshotFromAPIKey(context.Background(), apiKey)})
 	require.NoError(t, err)
@@ -100,4 +105,5 @@ func TestAPIKeyAuthSnapshotPreservesKeyAllowlistAndImageBilling(t *testing.T) {
 	require.Equal(t, []string{"gpt-5"}, restored.AllowedModels)
 	require.NotNil(t, restored.Group)
 	require.True(t, restored.Group.ImageCountBilling)
+	require.True(t, restored.Group.RequirePrivacySet)
 }

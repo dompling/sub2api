@@ -307,6 +307,23 @@
         {{ error }}
       </div>
 
+      <!-- Real 5-hour and weekly windows per quota group (retrieveUserQuotaSummary) -->
+      <div v-else-if="antigravityQuotaGroupBars.length > 0" class="space-y-1">
+        <UsageProgressBar
+          v-for="bar in antigravityQuotaGroupBars"
+          :key="bar.key"
+          :label="bar.label"
+          :title="bar.title"
+          :utilization="bar.utilization"
+          :resets-at="bar.resetsAt"
+          :color="bar.color"
+        />
+
+        <div v-if="aiCreditsDisplay" class="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+          💳 {{ t('admin.accounts.aiCreditsBalance') }}: {{ aiCreditsDisplay }}
+        </div>
+      </div>
+
       <!-- Usage data from API -->
       <div v-else-if="hasAntigravityQuotaFromAPI" class="space-y-1">
         <!-- Gemini 3 Pro -->
@@ -622,7 +639,7 @@
       </div>
     </template>
 
-    <!-- Kiro platform: show credits + bonus (仅直连 AWS;外部中转账号不展示 credits) -->
+    <!-- Kiro platform: show credits + welcome bonus + bonuses[] 赠送 + overage 摘要 (仅直连 AWS;外部中转账号不展示 credits) -->
     <template v-else-if="isKiroUsageAccount">
       <div v-if="loading" class="space-y-1.5">
         <div class="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
@@ -675,10 +692,30 @@
           </div>
         </div>
 
+        <div
+          v-for="(bonus, index) in kiroBonusEntries"
+          :key="`kiro-bonus-${index}-${bonus.bonus_code || bonus.name || ''}`"
+          class="space-y-1"
+        >
+          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <span class="font-medium tracking-[0.01em]">{{ bonus.name || t('admin.accounts.usageWindow.kiroBonusGift') }}</span>
+            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(bonus.current_usage) }} / {{ formatKiroAmount(bonus.usage_limit) }}</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div class="h-full rounded-full bg-emerald-500 transition-all" :style="{ width: `${clampPercent(bonus.percentage_used)}%` }"></div>
+          </div>
+          <div v-if="kiroProgressMeta(bonus)" class="text-[9px] leading-tight text-gray-500 dark:text-gray-400">
+            {{ kiroProgressMeta(bonus) }}
+          </div>
+        </div>
+
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400">
           <span v-if="kiroResetDisplay" class="inline-flex items-center gap-1">
             <span class="text-gray-400 dark:text-gray-500">{{ t('admin.accounts.usageWindow.kiroReset') }}</span>
             <span class="font-medium tabular-nums text-gray-600 dark:text-gray-300">{{ kiroResetDisplay }}</span>
+          </span>
+          <span v-if="kiroOverageSummary" class="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-300">
+            {{ kiroOverageSummary }}
           </span>
         </div>
         <div class="flex items-center gap-1.5 mt-0.5">
@@ -1032,7 +1069,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  kiroUsageMeta: [meta: { plan_type?: string }]
+  kiroUsageMeta: [meta: { plan_type?: string; kiro_overages_enabled?: boolean }]
   leonardoUsageMeta: [meta: { plan_type?: string }]
   fishUsageMeta: [meta: { plan_type?: string }]
   'account-updated': [account: Account]
@@ -1209,6 +1246,42 @@ interface AntigravityUsageResult {
   utilization: number
   resetTime: string | null
 }
+
+// ===== Antigravity quota groups (usageInfo.antigravity_quota_groups) =====
+// The summary reports each group's real 5-hour and weekly window. When present it replaces the
+// per-model bars below, which show only whichever window is tighter for each model.
+const antigravityQuotaGroupBars = computed(() => {
+  const groups = usageInfo.value?.antigravity_quota_groups
+  if (!groups || groups.length === 0) return []
+  const bars: Array<{
+    key: string
+    label: string
+    title: string
+    utilization: number
+    resetsAt: string | null
+    color: 'indigo' | 'emerald' | 'purple' | 'amber'
+  }> = []
+  for (const group of groups) {
+    // 'gemini' = Gemini models, 'gemini-argon-wtu' = the separate Argon quota of Pro plans,
+    // '3p' (or anything else) = Antigravity's Claude and GPT models.
+    const family = group.key === 'gemini' ? 'Gemini' : group.key.startsWith('gemini-argon') ? 'Argon' : 'Other'
+    for (const window of group.windows || []) {
+      const weekly = window.window === 'weekly'
+      const labelKey = `admin.accounts.usageWindow.antigravity${family}${weekly ? 'Weekly' : '5h'}`
+      const color: 'indigo' | 'emerald' | 'purple' | 'amber' =
+        family === 'Gemini' ? (weekly ? 'indigo' : 'emerald') : family === 'Argon' ? 'indigo' : weekly ? 'purple' : 'amber'
+      bars.push({
+        key: `${group.key}-${window.window}`,
+        label: t(labelKey),
+        title: group.name,
+        utilization: Math.round(window.utilization ?? 0),
+        resetsAt: window.resets_at ?? null,
+        color
+      })
+    }
+  }
+  return bars
+})
 
 // ===== Antigravity quota from API (usageInfo.antigravity_quota) =====
 
@@ -1880,7 +1953,10 @@ const kiroUsageAvailable = computed(() => {
   return !!(
     usageInfo.value?.kiro_credit ||
     usageInfo.value?.kiro_bonus ||
-    usageInfo.value?.kiro_reset_at
+    usageInfo.value?.kiro_bonuses?.length ||
+    usageInfo.value?.kiro_overage ||
+    usageInfo.value?.kiro_reset_at ||
+    usageInfo.value?.kiro_overages_enabled
   )
 })
 
@@ -1894,7 +1970,8 @@ const syncKiroUsageMeta = (info?: AccountUsageInfo | null) => {
   ).trim()
 
   emit('kiroUsageMeta', {
-    ...(planType ? { plan_type: planType } : {})
+    ...(planType ? { plan_type: planType } : {}),
+    kiro_overages_enabled: info?.kiro_overages_enabled === true
   })
 }
 
@@ -1969,19 +2046,45 @@ const kiroResetDisplay = computed(() => {
   return parsed.toLocaleDateString()
 })
 
-const kiroBonusMeta = computed(() => {
-  const bonus = usageInfo.value?.kiro_bonus
-  if (!bonus) return ''
-  if ((bonus.days_remaining ?? 0) > 0) {
-    return t('admin.accounts.usageWindow.kiroDaysLeft', { days: bonus.days_remaining })
+// Kiro 各额度池共用的 meta 行：优先剩余天数，回退到期日。
+const kiroProgressMeta = (
+  progress?: { days_remaining?: number; expiry_date?: string | null } | null
+) => {
+  if (!progress) return ''
+  if ((progress.days_remaining ?? 0) > 0) {
+    return t('admin.accounts.usageWindow.kiroDaysLeft', { days: progress.days_remaining })
   }
-  if (bonus.expiry_date) {
-    const parsed = new Date(bonus.expiry_date)
+  if (progress.expiry_date) {
+    const parsed = new Date(progress.expiry_date)
     if (!Number.isNaN(parsed.getTime())) {
       return `${t('admin.accounts.usageWindow.kiroExpires')} ${parsed.toLocaleDateString()}`
     }
   }
   return ''
+}
+
+const kiroBonusMeta = computed(() => kiroProgressMeta(usageInfo.value?.kiro_bonus))
+
+// bonuses[]（兑换/活动赠送）逐条展示。
+const kiroBonusEntries = computed(() => usageInfo.value?.kiro_bonuses ?? [])
+
+// overage（超刷）摘要：有超额用量或费用时展示，如「超额 2 ($0.08)」。
+const kiroOverageSummary = computed(() => {
+  const overage = usageInfo.value?.kiro_overage
+  if (!overage) return ''
+  const hasOverageCount = (overage.current_overages ?? 0) > 0
+  const hasCharges = (overage.overage_charges ?? 0) > 0
+  if (!hasOverageCount && !hasCharges) return ''
+
+  const parts: string[] = [t('admin.accounts.usageWindow.kiroOverage')]
+  if (hasOverageCount) {
+    parts.push(formatKiroAmount(overage.current_overages))
+  }
+  if (hasCharges) {
+    const symbol = overage.currency_symbol || overage.currency_code || ''
+    parts.push(`(${symbol}${(overage.overage_charges ?? 0).toFixed(2)})`)
+  }
+  return parts.join(' ')
 })
 
 const kiroRuntimeResetDisplay = computed(() => {
@@ -2023,7 +2126,9 @@ const kiroStatusBadgeLabel = computed(() => {
   if (usageInfo.value?.needs_reauth) return t('admin.accounts.needsReauth')
   if (isKiroProfileError.value) return t('admin.accounts.usageError')
   if (isKiroUsageForbidden.value) return t('admin.accounts.forbidden')
+  if (kiroQuotaState.value === 'overage_active') return t('admin.accounts.status.overageActive')
   if (kiroQuotaState.value === 'credits_exhausted') return t('admin.accounts.status.creditsExhausted')
+  if (kiroQuotaState.value === 'overage_exhausted') return t('admin.accounts.status.overageExhausted')
   return ''
 })
 
@@ -2034,7 +2139,8 @@ const kiroStatusToneClass = computed(() => {
   if (usageInfo.value?.needs_reauth) return 'text-orange-700 dark:text-orange-300'
   if (isKiroProfileError.value) return 'text-yellow-700 dark:text-yellow-300'
   if (isKiroUsageForbidden.value) return 'text-rose-700 dark:text-rose-300'
-  if (kiroQuotaState.value === 'credits_exhausted') {
+  if (kiroQuotaState.value === 'overage_active') return 'text-amber-700 dark:text-amber-300'
+  if (kiroQuotaState.value === 'credits_exhausted' || kiroQuotaState.value === 'overage_exhausted') {
     return 'text-red-700 dark:text-red-300'
   }
   return 'text-gray-600 dark:text-gray-300'
@@ -2047,6 +2153,9 @@ const kiroStatusHint = computed(() => {
   }
   if (kiroQuotaState.value === 'credits_exhausted' && kiroQuotaResetDisplay.value) {
     return t('admin.accounts.status.creditsExhaustedUntil', { time: kiroQuotaResetDisplay.value })
+  }
+  if (kiroQuotaState.value === 'overage_exhausted' && kiroQuotaResetDisplay.value) {
+    return t('admin.accounts.status.overageExhaustedUntil', { time: kiroQuotaResetDisplay.value })
   }
   return ''
 })

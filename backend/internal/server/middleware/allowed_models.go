@@ -1,13 +1,11 @@
 package middleware
 
 import (
-	"bytes"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -43,19 +41,22 @@ func RequireAllowedModels() gin.HandlerFunc {
 
 		body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 		if err != nil {
-			writeAllowedModelsError(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+			if RejectRequestBodyReadError(c, "middleware.allowed_models", err) {
+				return
+			}
+			AbortWithRequestBodyReadFailure(c, "middleware.allowed_models", err)
 			return
 		}
 
 		model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 		if model == "" {
 			// model 缺省：无法判定，交由后续 handler 必填校验。
-			resetRequestBodyForAllowedModels(c, body)
+			requestmodel.ResetRequestBody(c.Request, body)
 			c.Next()
 			return
 		}
 		if apiKey.IsModelAllowed(model) {
-			resetRequestBodyForAllowedModels(c, body)
+			requestmodel.ResetRequestBody(c.Request, body)
 			c.Next()
 			return
 		}
@@ -85,12 +86,4 @@ func writeAllowedModelsError(c *gin.Context, status int, errType, message string
 		})
 	}
 	c.Abort()
-}
-
-// resetRequestBodyForAllowedModels 把已读出的请求体放回，供后续 handler / 中间件
-// 读取（与 compositeTargetPlatformMiddleware 的 resetRequestBody 语义一致）。
-func resetRequestBodyForAllowedModels(c *gin.Context, body []byte) {
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-	c.Request.ContentLength = int64(len(body))
-	c.Request.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }

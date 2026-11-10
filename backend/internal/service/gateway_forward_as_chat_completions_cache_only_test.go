@@ -18,8 +18,8 @@ import (
 // 放在独立的无 build tag 文件里（而非 gateway_forward_as_chat_completions_test.go，
 // 那个文件是 //go:build unit），以便不受该文件既有、与本改动无关的编译错误影响。
 func TestHandleCCBufferedFromAnthropic_PreservesCacheOnlyUsage(t *testing.T) {
-	t.Parallel()
 	gin.SetMode(gin.TestMode)
+	t.Parallel()
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

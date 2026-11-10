@@ -41,6 +41,7 @@
         <p v-if="authStore.user?.email" class="break-all text-sm text-gray-600 dark:text-gray-300">{{ t('mcp.signedInAs', { email: authStore.user.email }) }}</p>
         <div>
           <label for="mcp-consent-scope" class="input-label">{{ t('mcp.scope') }}</label>
+          <!-- Select defaults aria-label to "Select option", which would override the <label for>; pass the visible text. -->
           <Select
             id="mcp-consent-scope"
             v-model="scope"
@@ -48,6 +49,7 @@
             :disabled="submitting"
             :aria-label="t('mcp.scope')"
             aria-describedby="mcp-scope-hint"
+            data-testid="scope-select"
           />
           <p id="mcp-scope-hint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ scope === 'admin' ? t('mcp.adminScopeHint') : t('mcp.userScopeHint') }}</p>
         </div>
@@ -56,10 +58,11 @@
           <Select
             id="mcp-consent-permissions"
             v-model="readOnly"
-            :options="[{ value: true, label: t('mcp.readOnly') }, { value: false, label: t('mcp.readWrite') }]"
+            :options="permissionOptions"
             :disabled="submitting"
             :aria-label="t('mcp.permissions')"
             aria-describedby="mcp-permissions-hint"
+            data-testid="permissions-select"
           />
           <p id="mcp-permissions-hint" class="mt-2 text-xs" :class="readOnly ? 'text-gray-500 dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'">{{ readOnly ? t('mcp.readOnlyHint') : t('mcp.readWriteHint') }}</p>
           <p v-if="scope === 'admin' && !readOnly" data-testid="admin-write-hint" class="mt-1 text-xs text-amber-700 dark:text-amber-400">{{ t('mcp.adminWriteHint') }}</p>
@@ -97,13 +100,17 @@ const submitError = ref('')
 const consent = ref<MCPConsent | null>(null)
 const scope = ref<MCPAccessScope>('user')
 const readOnly = ref(true)
+let authorization: MCPAuthorization | null = null
+let generation = 0
+const redirectOrigin = computed(() => consent.value ? new URL(consent.value.redirect_uri).origin : '')
 const scopeOptions = computed(() => [
   { value: 'user', label: t('mcp.userScope') },
   ...(authStore.isAdmin ? [{ value: 'admin', label: t('mcp.adminScope') }] : [])
 ])
-let authorization: MCPAuthorization | null = null
-let generation = 0
-const redirectOrigin = computed(() => consent.value ? new URL(consent.value.redirect_uri).origin : '')
+const permissionOptions = computed(() => [
+  { value: true, label: t('mcp.readOnly') },
+  { value: false, label: t('mcp.readWrite') }
+])
 
 function errorMessage(error: unknown, fallback: string): string {
   const message = (error as { message?: unknown } | null)?.message
