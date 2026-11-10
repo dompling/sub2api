@@ -203,10 +203,15 @@ func (c *codebuddyOAuthClient) RefreshToken(ctx context.Context, refreshToken, p
 }
 
 func createCodeBuddyReqClient(proxyURL string) (*req.Client, error) {
-	return getSharedReqClient(reqClientOptions{
-		ProxyURL: proxyURL,
-		Timeout:  60 * time.Second,
+	client, err := getSharedReqClient(reqClientOptions{
+		ProxyURL:    proxyURL,
+		Timeout:     60 * time.Second,
+		NoRedirects: true,
 	})
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "CODEBUDDY_CLIENT_INIT_FAILED", "invalid codebuddy proxy configuration")
+	}
+	return client, nil
 }
 
 func codebuddyStatusError(code, message string, resp *req.Response) error {

@@ -30,16 +30,18 @@ func DefaultModels() []string {
 // ModelInfo 是解析后的单个 CodeBuddy 模型（含计费与上下文配置），
 // 用于模型列表展示与网关 token 上限限制。
 type ModelInfo struct {
-	ID                string  `json:"id"`
-	Name              string  `json:"name"`
-	DisplayName       string  `json:"display_name"`
-	Credits           string  `json:"credits"`
-	CreditMultiplier  float64 `json:"credit_multiplier"`
-	MaxInputTokens    int     `json:"max_input_tokens"`
-	MaxOutputTokens   int     `json:"max_output_tokens"`
-	SupportsImages    bool    `json:"supports_images"`
-	SupportsReasoning bool    `json:"supports_reasoning"`
-	SupportsToolCall  bool    `json:"supports_tool_call"`
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	DisplayName       string           `json:"display_name"`
+	Credits           string           `json:"credits"`
+	CreditMultiplier  float64          `json:"credit_multiplier"`
+	MaxInputTokens    int              `json:"max_input_tokens"`
+	MaxOutputTokens   int              `json:"max_output_tokens"`
+	SupportsImages    bool             `json:"supports_images"`
+	SupportsReasoning bool             `json:"supports_reasoning"`
+	SupportsToolCall  bool             `json:"supports_tool_call"`
+	Reasoning         *ReasoningConfig `json:"reasoning,omitempty"`
+	OnlyReasoning     bool             `json:"only_reasoning,omitempty"`
 }
 
 // parseCreditMultiplier 将 "x2.20 credits" 形式的倍率字符串解析为 float。
@@ -92,6 +94,8 @@ func ParseModels(configBody []byte) ([]ModelInfo, error) {
 			SupportsImages:    m.SupportsImages,
 			SupportsReasoning: m.SupportsReasoning,
 			SupportsToolCall:  m.SupportsToolCall,
+			Reasoning:         m.Reasoning,
+			OnlyReasoning:     m.OnlyReasoning,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

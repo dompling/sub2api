@@ -53,9 +53,12 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	clientStream := anthropicReq.Stream
 
 	// 2. Anthropic → Chat Completions (direct, no Responses intermediary)
-	chatReq, err := apicompat.AnthropicToChatCompletionsRequestWithMinOutputTokens(
+	chatReq, err := apicompat.AnthropicToChatCompletionsRequestWithOptions(
 		&anthropicReq,
-		configuredMinOutputTokens(s.cfg),
+		&apicompat.AnthropicToChatOptions{
+			MinOutputTokens:            configuredMinOutputTokens(s.cfg),
+			PreserveAssistantReasoning: account.Platform == PlatformCodeBuddy,
+		},
 	)
 	if err != nil {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -89,7 +92,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
 	}
-	if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(chatBody, upstreamModel); normalized {
+	if account.Platform == PlatformCodeBuddy {
+		chatBody = s.applyCodeBuddyRequestSettings(chatBody, body, account)
+	} else if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(chatBody, upstreamModel); normalized {
 		chatBody = normalizedBody
 	}
 	if account.Platform == PlatformOpenAI {
@@ -123,7 +128,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	)
 
 	// 3. Build and send upstream request via the shared CC pipeline
-	apiKey, targetURL, err := s.resolveCCFallbackTarget(account)
+	apiKey, targetURL, err := s.resolveCCFallbackTarget(ctx, account)
 	if err != nil {
 		return nil, err
 	}

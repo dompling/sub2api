@@ -26,13 +26,19 @@ func (f *CodeBuddyQuotaFetcher) CanFetch(account *Account) bool {
 	return account.GetCodeBuddyAccessToken() != ""
 }
 
-// GetProxyURL 获取账户的代理 URL（CodeBuddy 计费接口可直连，无需代理时返回空字符串）。
-func (f *CodeBuddyQuotaFetcher) GetProxyURL(_ context.Context, _ *Account) string {
+// GetProxyURL keeps billing requests on the account's configured proxy.
+func (f *CodeBuddyQuotaFetcher) GetProxyURL(_ context.Context, account *Account) string {
+	if account != nil && account.Proxy != nil {
+		return account.Proxy.URL()
+	}
 	return ""
 }
 
 // FetchQuota 获取 CodeBuddy 账户额度信息。
 func (f *CodeBuddyQuotaFetcher) FetchQuota(ctx context.Context, account *Account, proxyURL string) (*QuotaResult, error) {
+	if account.ProxyID != nil && account.Proxy == nil && proxyURL == "" {
+		return nil, fmt.Errorf("codebuddy billing: configured account proxy is unavailable")
+	}
 	accessToken := account.GetCodeBuddyAccessToken()
 	userID := account.GetCredential("uid")
 	if accessToken == "" {

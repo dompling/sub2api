@@ -74,3 +74,33 @@ func TestChatReasoningAlias_ReasoningContentTakesPrecedence(t *testing.T) {
 	}
 	require.Equal(t, []string{"preferred reasoning"}, deltas)
 }
+
+func TestChatReasoningAlias_EmptyCanonicalFallsBackInStreamingBridges(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		delta    string
+		expected string
+	}{
+		{"empty_canonical", `{"reasoning_content":"","reasoning":"fallback reasoning"}`, "fallback reasoning"},
+		{"nonempty_canonical", `{"reasoning_content":"preferred reasoning","reasoning":"ignored alias"}`, "preferred reasoning"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var chunk ChatCompletionsChunk
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"chatcmpl_alias","model":"reasoning-model","choices":[{"index":0,"delta":`+tc.delta+`}]}`), &chunk))
+			var anthropicText string
+			for _, event := range ChatCompletionsChunkToAnthropicEvents(&chunk, NewChatCompletionsToAnthropicStreamState("reasoning-model")) {
+				if event.Delta != nil && event.Delta.Type == "thinking_delta" {
+					anthropicText += event.Delta.Thinking
+				}
+			}
+			require.Equal(t, tc.expected, anthropicText)
+			var responsesText string
+			for _, event := range ChatCompletionsChunkToResponsesEvents(&chunk, NewChatCompletionsToResponsesStreamState("reasoning-model")) {
+				if event.Type == "response.reasoning_summary_text.delta" {
+					responsesText += event.Delta
+				}
+			}
+			require.Equal(t, tc.expected, responsesText)
+		})
+	}
+}

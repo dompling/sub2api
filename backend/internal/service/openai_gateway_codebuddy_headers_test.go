@@ -73,6 +73,7 @@ func TestSendCCUpstreamRequestPreservesCodeBuddyClientHeaders(t *testing.T) {
 	c := newCodeBuddyHeaderTestContext()
 	c.Request.Header.Set("X-Conversation-ID", "client-conversation")
 	c.Request.Header.Set("X-Agent-Intent", "review")
+	c.Request.Header.Set("X-Agent-Purpose", " conversation_topic ")
 
 	resp, err := svc.sendCCUpstreamRequest(
 		context.Background(), c, account, "https://copilot.tencent.com/v2/chat/completions",
@@ -83,6 +84,12 @@ func TestSendCCUpstreamRequestPreservesCodeBuddyClientHeaders(t *testing.T) {
 	require.NotNil(t, upstream.request)
 	require.Equal(t, "client-conversation", upstream.request.Header.Get("X-Conversation-ID"))
 	require.Equal(t, "review", upstream.request.Header.Get("X-Agent-Intent"))
+	require.Equal(t, "conversation_topic", upstream.request.Header.Get("X-Agent-Purpose"))
+	messageID := upstream.request.Header.Get("X-Conversation-Message-ID")
+	require.NotEmpty(t, messageID)
+	require.Equal(t, messageID, upstream.request.Header.Get("X-Request-ID"),
+		"WorkBuddy correlates each HTTP request with its conversation message")
+	require.NotEqual(t, messageID, upstream.request.Header.Get("X-Conversation-Request-ID"))
 }
 
 func TestSendCCUpstreamRequestDefaultsCodeBuddyAgentIntent(t *testing.T) {
@@ -103,4 +110,6 @@ func TestSendCCUpstreamRequestDefaultsCodeBuddyAgentIntent(t *testing.T) {
 	require.NotNil(t, upstream.request)
 	require.Equal(t, "stable-session", upstream.request.Header.Get("X-Conversation-ID"))
 	require.Equal(t, "craft", upstream.request.Header.Get("X-Agent-Intent"))
+	require.Empty(t, upstream.request.Header.Get("X-Agent-Purpose"),
+		"ordinary requests must not be labeled as conversation title generation")
 }

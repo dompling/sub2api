@@ -1022,6 +1022,12 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
 	}
+	// CodeBuddy CDN/proxy HTML errors are not evidence of invalid credentials.
+	// Match the existing OpenAI HTML policy without changing structured 403s.
+	if account.Platform == PlatformCodeBuddy && isHTMLResponse(responseBody) {
+		slog.Warn("codebuddy_403_html_body_skips_account_penalty", "account_id", account.ID)
+		return false
+	}
 	// Kimi reports its transient per-account concurrency/business limit as a 403.
 	// Keep the normal 403 failover signal (true), but never feed this exact message
 	// into the escalating 403 counter that can permanently mark the account error.
@@ -1262,6 +1268,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 		return
 	}
+	if account.Platform == PlatformCodeBuddy {
+		s.handleCodeBuddy429(ctx, account, headers)
+		return
+	}
 	// 真实 Ollama Cloud 用量账号（credentials base_url 指向 ollama.com）的 429 由
 	// ollama.com 的用量窗口驱动。其响应头不得被当作 OpenAI codex / Anthropic /
 	// CN 限流来解析，故在国产供应商分支之前单独处理：先设置永不缩短的临时冷却，
@@ -1390,6 +1400,57 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	}
 
 	slog.Info("account_rate_limited", "account_id", account.ID, "reset_at", resetAt)
+}
+
+func (s *RateLimitService) handleCodeBuddy429(ctx context.Context, account *Account, headers http.Header) {
+	now := time.Now()
+	var resetAt *time.Time
+	raw := strings.TrimSpace(headers.Get("Retry-After"))
+	if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
+		// Reject NaN, infinities and duration overflow before converting to int64.
+		if seconds > 0 && seconds < float64(1<<63-1)/float64(time.Second) {
+			reset := now.Add(time.Duration(seconds * float64(time.Second)))
+			resetAt = &reset
+		}
+	} else if date, err := http.ParseTime(raw); err == nil {
+		resetAt = &date
+	}
+	if resetAt == nil || !resetAt.After(now) {
+		cooldown, enabled := s.get429FallbackCooldown(ctx, account)
+		if !enabled {
+			return
+		}
+		reset := now.Add(cooldown)
+		resetAt = &reset
+	}
+	reset := *resetAt
+	if account.RateLimitResetAt != nil && account.RateLimitResetAt.After(reset) {
+		reset = *account.RateLimitResetAt
+	}
+
+	// A stale scheduler snapshot must not overwrite another request's longer
+	// cooldown. The production repository provides this atomic extension.
+	var err error
+	if extender, ok := s.accountRepo.(interface {
+		SetRateLimitedIfLater(context.Context, int64, time.Time) error
+	}); ok {
+		err = extender.SetRateLimitedIfLater(ctx, account.ID, reset)
+	} else {
+		err = s.accountRepo.SetRateLimited(ctx, account.ID, reset)
+	}
+	if err != nil {
+		slog.Warn("codebuddy_rate_limit_set_failed", "account_id", account.ID, "error", err)
+	}
+
+	if s.runtimeBlocker != nil {
+		// IfLater may keep a later deadline; announce that value to the runtime
+		// scheduler as well. A read failure still preserves the known cooldown.
+		current, readErr := s.accountRepo.GetByID(ctx, account.ID)
+		if readErr == nil && current != nil && current.RateLimitResetAt != nil && current.RateLimitResetAt.After(reset) {
+			reset = *current.RateLimitResetAt
+		}
+		s.notifyAccountSchedulingBlocked(account, reset, "codebuddy_429")
+	}
 }
 
 func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, account *Account, reason string) {

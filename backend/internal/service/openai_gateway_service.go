@@ -1248,6 +1248,9 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 		}
 		account = credAccount
 	}
+	if account.Platform == PlatformCodeBuddy && account.ProxyID != nil && account.Proxy == nil {
+		return "", "", errors.New("codebuddy account proxy is unavailable")
+	}
 	switch account.Type {
 	case AccountTypeOAuth:
 		if account.IsOpenAIAgentIdentity() {

@@ -170,12 +170,12 @@ func (s *OpenAIGatewayService) openAIChatCompletionsTargetURL(account *Account) 
 // resolveCCFallbackTarget 解析两条 CC 回退路径共用的账号凭证与上游端点。
 // CodeBuddy 走 OpenAI 兼容协议：access_token 作 Bearer，基址为 copilot.tencent.com；
 // 其余平台走 openai api_key / OpenAI 协议 API Key。
-func (s *OpenAIGatewayService) resolveCCFallbackTarget(account *Account) (apiKey string, targetURL string, err error) {
+func (s *OpenAIGatewayService) resolveCCFallbackTarget(ctx context.Context, account *Account) (apiKey string, targetURL string, err error) {
 	switch account.Platform {
 	case PlatformCodeBuddy:
-		apiKey = account.GetCodeBuddyAccessToken()
-		if apiKey == "" {
-			return "", "", fmt.Errorf("account %d missing codebuddy access_token", account.ID)
+		apiKey, _, err = s.GetAccessToken(ctx, account)
+		if err != nil {
+			return "", "", err
 		}
 		targetURL, err = codebuddy.BuildChatCompletionsURL(account.GetCodeBuddyBaseURL())
 		if err != nil {
@@ -264,16 +264,19 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// 实测：本地 curl 带全套头时 1+1 正常返回，sub2api 缺头时被上游拦截。
 	if account.Platform == PlatformCodeBuddy {
 		cid := resolveCodeBuddyConversationID(c, body)
+		messageID := codebuddy.GenerateRequestUUID()
 		upstreamReq.Header.Set("X-Conversation-ID", cid)
 		upstreamReq.Header.Set("X-Conversation-Request-ID", codebuddy.GenerateRequestUUID())
-		upstreamReq.Header.Set("X-Conversation-Message-ID", codebuddy.GenerateRequestUUID())
-		upstreamReq.Header.Set("X-Request-ID", codebuddy.GenerateRequestUUID())
+		upstreamReq.Header.Set("X-Conversation-Message-ID", messageID)
+		upstreamReq.Header.Set("X-Request-ID", messageID)
 		agentIntent := strings.TrimSpace(c.GetHeader("X-Agent-Intent"))
 		if agentIntent == "" {
 			agentIntent = "craft"
 		}
 		upstreamReq.Header.Set("X-Agent-Intent", agentIntent)
-		upstreamReq.Header.Set("X-Agent-Purpose", "conversation_topic")
+		if purpose := strings.TrimSpace(c.GetHeader("X-Agent-Purpose")); purpose != "" {
+			upstreamReq.Header.Set("X-Agent-Purpose", purpose)
+		}
 		upstreamReq.Header.Set("X-IDE-Type", "WorkBuddy")
 		upstreamReq.Header.Set("X-IDE-Name", "WorkBuddy")
 		upstreamReq.Header.Set("X-IDE-Version", "5.2.5")
@@ -397,8 +400,12 @@ func (s *OpenAIGatewayService) aggregateCCStream(
 			if choice.Delta.Content != nil {
 				_, _ = textBuilder.WriteString(*choice.Delta.Content)
 			}
-			if choice.Delta.ReasoningContent != nil {
-				_, _ = reasoningBuilder.WriteString(*choice.Delta.ReasoningContent)
+			reasoning := choice.Delta.ReasoningContent
+			if reasoning == nil || *reasoning == "" {
+				reasoning = choice.Delta.Reasoning
+			}
+			if reasoning != nil {
+				_, _ = reasoningBuilder.WriteString(*reasoning)
 			}
 			for _, tc := range choice.Delta.ToolCalls {
 				idx := -1

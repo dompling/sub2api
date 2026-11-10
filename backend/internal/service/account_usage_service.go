@@ -1399,8 +1399,8 @@ func (s *AccountUsageService) getCodeBuddyUsage(ctx context.Context, account *Ac
 		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer fetchCancel()
 
-		// 计费接口直连 workbuddy.cn；代理在此不计（account.Proxy 主要服务 copilot 推理）。
-		fetchResult, err := s.codebuddyQuotaFetcher.FetchQuota(fetchCtx, account, "")
+		proxyURL := s.codebuddyQuotaFetcher.GetProxyURL(fetchCtx, account)
+		fetchResult, err := s.codebuddyQuotaFetcher.FetchQuota(fetchCtx, account, proxyURL)
 		if err != nil {
 			now := time.Now()
 			degraded := &UsageInfo{UpdatedAt: &now, Error: err.Error(), ErrorCode: "network_error"}

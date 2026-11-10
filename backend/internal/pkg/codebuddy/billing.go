@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 // BillingBaseURL 是 CodeBuddy 计费（额度）接口所在域名（与 copilot.tencent.com 不同源）。
@@ -114,17 +114,9 @@ func SumBillingUsage(data BillingUserResourceData) BillingUsage {
 	}
 }
 
-func newProxyTransport(proxyURL string) (*http.Transport, error) {
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Transport{Proxy: http.ProxyURL(u)}, nil
-}
-
 // GetUserResource 调用 get-user-resource 并返回原始响应与汇总用量。
 // accessToken 为 CodeBuddy OAuth access_token（作为 Bearer 鉴权，实测对 workbuddy.cn 计费接口有效）；
-// userID 对应账号的 uid（x-user-id 头）。proxyURL 可选（计费接口通常直连）。
+// userID 对应账号的 uid（x-user-id 头）。proxyURL 应与账号配置保持一致。
 func GetUserResource(ctx context.Context, accessToken, userID, proxyURL string) (*BillingUserResourceResponse, *BillingUsage, error) {
 	if strings.TrimSpace(accessToken) == "" {
 		return nil, nil, fmt.Errorf("codebuddy billing: empty access token")
@@ -152,14 +144,12 @@ func GetUserResource(ctx context.Context, accessToken, userID, proxyURL string) 
 	req.Header.Set("x-user-id", userID)
 	req.Header.Set("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	if proxyURL != "" {
-		if transport, terr := newProxyTransport(proxyURL); terr == nil {
-			client.Transport = transport
-		} else {
-			slog.Warn("codebuddy billing: invalid proxy url, falling back to direct connection",
-				"proxy_url", proxyURL, "error", terr)
-		}
+	client, err := newCodeBuddyHTTPClient(proxyURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	if client.Transport != nil {
+		defer client.CloseIdleConnections()
 	}
 
 	resp, err := client.Do(req)
@@ -173,7 +163,7 @@ func GetUserResource(ctx context.Context, accessToken, userID, proxyURL string) 
 		return nil, nil, fmt.Errorf("read billing response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("codebuddy billing returned HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("codebuddy billing returned HTTP %d: %s", resp.StatusCode, logredact.RedactText(string(body), "accessToken", "refreshToken"))
 	}
 
 	var parsed BillingUserResourceResponse
@@ -181,7 +171,7 @@ func GetUserResource(ctx context.Context, accessToken, userID, proxyURL string) 
 		return nil, nil, fmt.Errorf("parse billing response: %w", err)
 	}
 	if parsed.Code != 0 {
-		return &parsed, nil, fmt.Errorf("codebuddy billing error code=%d msg=%s", parsed.Code, parsed.Msg)
+		return &parsed, nil, fmt.Errorf("codebuddy billing error code=%d msg=%s", parsed.Code, logredact.RedactText(parsed.Msg, "accessToken", "refreshToken"))
 	}
 
 	usage := SumBillingUsage(parsed.Data.Response.Data)

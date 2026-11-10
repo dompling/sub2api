@@ -55,6 +55,9 @@ func (p *CodeBuddyTokenProvider) SetTempUnschedCache(cache TempUnschedCache) {
 }
 
 func (p *CodeBuddyTokenProvider) GetAccessToken(ctx context.Context, account *Account) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if account == nil {
 		return "", errors.New("account is nil")
 	}
@@ -62,14 +65,18 @@ func (p *CodeBuddyTokenProvider) GetAccessToken(ctx context.Context, account *Ac
 		return "", errors.New("not a codebuddy oauth account")
 	}
 
+	expiresAt := account.GetCredentialAsTime("expires_at")
 	cacheKey := CodeBuddyTokenCacheKey(account)
 	if p.tokenCache != nil {
 		if token, err := p.tokenCache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
-			return token, nil
+			// A different token can be a newer rotation than this account snapshot.
+			// The same expired credential must not become valid just by caching it.
+			if token != account.GetCodeBuddyAccessToken() || (expiresAt != nil && time.Now().Before(*expiresAt)) {
+				return token, nil
+			}
 		}
 	}
 
-	expiresAt := account.GetCredentialAsTime("expires_at")
 	needsRefresh := expiresAt == nil || time.Until(*expiresAt) <= codeBuddyTokenCacheSkew
 	if needsRefresh && strings.TrimSpace(account.GetCodeBuddyRefreshToken()) == "" {
 		if expiresAt == nil || !time.Now().Before(*expiresAt) {
@@ -80,42 +87,66 @@ func (p *CodeBuddyTokenProvider) GetAccessToken(ctx context.Context, account *Ac
 	if needsRefresh && p.refreshAPI != nil && p.executor != nil {
 		refreshCtx, cancel := context.WithTimeout(ctx, codeBuddyRequestRefreshTimeout)
 		defer cancel()
-		result, err := p.refreshAPI.RefreshIfNeeded(refreshCtx, account, p.executor, codeBuddyTokenCacheSkew)
+		result, err := p.refreshAPI.RefreshIfNeeded(withOAuthRefreshRequestPath(refreshCtx), account, p.executor, codeBuddyTokenCacheSkew)
 		if err != nil {
+			// A canceled request or an account changed by another actor is not
+			// evidence that this credential is unhealthy. An independent refresh
+			// timeout still follows the normal cooldown policy.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", ctxErr
+			}
+			if errors.Is(err, errOAuthRefreshAccountStateChanged) {
+				return "", err
+			}
 			p.markTempUnschedulable(account, err)
 			if p.refreshPolicy.OnRefreshError == ProviderRefreshErrorReturn {
 				return "", err
 			}
-		} else if !result.LockHeld && result.Account != nil {
+		} else if result != nil && result.LockHeld {
+			if expiresAt == nil || !time.Now().Before(*expiresAt) {
+				return "", errors.New("codebuddy token refresh is in progress and existing access_token is not valid")
+			}
+		} else if result != nil && result.Account != nil {
 			account = result.Account
 			expiresAt = account.GetCredentialAsTime("expires_at")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 
 	accessToken := account.GetCodeBuddyAccessToken()
 	if strings.TrimSpace(accessToken) == "" {
 		return "", errors.New("access_token not found in credentials")
 	}
+	if expiresAt == nil || !time.Now().Before(*expiresAt) {
+		return "", errors.New("codebuddy access_token is expired or expiry is unknown")
+	}
 
 	if p.tokenCache != nil {
 		latestAccount, isStale := CheckTokenVersion(ctx, account, p.accountRepo)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if isStale && latestAccount != nil {
+			if !latestAccount.IsCodeBuddyOAuth() || !latestAccount.IsActive() {
+				return "", errOAuthRefreshAccountStateChanged
+			}
 			accessToken = latestAccount.GetCodeBuddyAccessToken()
 			if strings.TrimSpace(accessToken) == "" {
 				return "", errors.New("access_token not found after version check")
 			}
+			latestExpiry := latestAccount.GetCredentialAsTime("expires_at")
+			if latestExpiry == nil || !time.Now().Before(*latestExpiry) {
+				return "", errors.New("codebuddy access_token is expired or expiry is unknown after version check")
+			}
 		} else {
-			ttl := 30 * time.Minute
-			if expiresAt != nil {
-				until := time.Until(*expiresAt)
-				switch {
-				case until > codeBuddyTokenCacheSkew:
-					ttl = until - codeBuddyTokenCacheSkew
-				case until > 0:
-					ttl = until
-				default:
-					ttl = time.Minute
-				}
+			ttl := time.Until(*expiresAt)
+			if ttl <= 0 {
+				return "", errors.New("codebuddy access_token is expired")
+			}
+			if ttl > codeBuddyTokenCacheSkew {
+				ttl -= codeBuddyTokenCacheSkew
 			}
 			_ = p.tokenCache.SetAccessToken(ctx, cacheKey, accessToken, ttl)
 		}

@@ -83,7 +83,7 @@ func TestAnthropicChatBridge_ReasoningSurvivesOutboundInboundRoundTrip(t *testin
 	require.NoError(t, err)
 
 	// 入站：Anthropic content blocks → Chat 请求
-	back, err := anthropicAssistantToChatMessages(raw)
+	back, err := anthropicAssistantToChatMessages(raw, false)
 	require.NoError(t, err)
 	require.Len(t, back, 1)
 	require.Equal(t, upstream.ReasoningContent, back[0].ReasoningContent,
@@ -127,8 +127,7 @@ func TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement(t *tes
 		"两条桥对等价历史必须产出同样的 reasoning_content 位置")
 }
 
-// 作用域守卫：不带工具调用的纯文本轮次维持现状(与兄弟桥一致 —— reasoning 只随
-// 工具调用回传)，避免把 reasoning_content 撒到不需要它的上游请求上。
+// 作用域守卫：默认不在普通 assistant 轮次回传 thinking；需要该行为的上游显式开启。
 func TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped(t *testing.T) {
 	req := &AnthropicRequest{
 		Model:     "deepseek-v4-flash",
@@ -221,9 +220,90 @@ func TestAnthropicThinkingToReasoningContent(t *testing.T) {
 
 // 纯字符串形态的 assistant content 没有 blocks 可读，走早返回分支，不得 panic。
 func TestAnthropicAssistantToChatMessages_PlainStringContentUnaffected(t *testing.T) {
-	msgs, err := anthropicAssistantToChatMessages(json.RawMessage(`"just text"`))
+	msgs, err := anthropicAssistantToChatMessages(json.RawMessage(`"just text"`), false)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Empty(t, msgs[0].ReasoningContent)
 	require.Equal(t, `"just text"`, string(msgs[0].Content))
+}
+
+func TestAnthropicToChatCompletionsRequestWithOptions_PreserveAssistantReasoning(t *testing.T) {
+	cases := []struct {
+		name      string
+		content   string
+		reasoning string
+		text      string
+		toolCalls int
+	}{
+		{
+			name: "ordinary_multi_block_turn",
+			content: `[{"type":"thinking","thinking":"first"},{"type":"text","text":"answer"},
+				{"type":"thinking","thinking":"second"}]`,
+			reasoning: "first\nsecond", text: `"answer"`,
+		},
+		{name: "thinking_only", content: `[{"type":"thinking","thinking":"unfinished thought"}]`, reasoning: "unfinished thought"},
+		{name: "plain_string", content: `"plain answer"`, text: `"plain answer"`},
+		{name: "redacted_thinking", content: `[{"type":"redacted_thinking","data":"opaque","signature":"sig"},{"type":"text","text":"answer"}]`, text: `"answer"`},
+		{name: "signature_only", content: `[{"type":"thinking","signature":"opaque-signature"},{"type":"text","text":"answer"}]`, text: `"answer"`},
+		{name: "tool_turn", content: anthropicThinkingToolTurn, reasoning: "user wants weather, call the tool", text: `"checking"`, toolCalls: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &AnthropicRequest{
+				Model: "hy3", MaxTokens: 16,
+				Messages: []AnthropicMessage{{Role: "assistant", Content: json.RawMessage(tc.content)}},
+			}
+			if tc.toolCalls > 0 {
+				req.Messages = append(req.Messages, AnthropicMessage{Role: "user", Content: json.RawMessage(`[{"type":"tool_result","tool_use_id":"toolu_1","content":"sunny"}]`)})
+			}
+			out, err := AnthropicToChatCompletionsRequestWithOptions(req, &AnthropicToChatOptions{
+				MinOutputTokens: 64, PreserveAssistantReasoning: true,
+			})
+			require.NoError(t, err)
+			require.Len(t, out.Messages, 1+tc.toolCalls)
+			require.Equal(t, tc.reasoning, out.Messages[0].ReasoningContent)
+			require.Equal(t, tc.text, string(out.Messages[0].Content))
+			require.Len(t, out.Messages[0].ToolCalls, tc.toolCalls)
+			require.Equal(t, 64, *out.MaxCompletionTokens)
+			if tc.toolCalls > 0 {
+				require.Equal(t, "get_weather", out.Messages[0].ToolCalls[0].Function.Name)
+				require.Equal(t, "toolu_1", out.Messages[1].ToolCallID)
+			}
+			payload, err := json.Marshal(out)
+			require.NoError(t, err)
+			require.NotContains(t, string(payload), "opaque")
+			if tc.reasoning != "" {
+				require.Contains(t, string(payload), `"reasoning_content":`)
+			} else {
+				require.NotContains(t, string(payload), "reasoning_content")
+			}
+
+			// The old wrappers and nil options retain the generic provider behavior.
+			generic, err := AnthropicToChatCompletionsRequest(req)
+			require.NoError(t, err)
+			withNilOptions, err := AnthropicToChatCompletionsRequestWithOptions(req, nil)
+			require.NoError(t, err)
+			require.Equal(t, generic, withNilOptions)
+			if tc.toolCalls == 0 {
+				require.Empty(t, generic.Messages[0].ReasoningContent)
+			} else {
+				require.Equal(t, tc.reasoning, generic.Messages[0].ReasoningContent)
+			}
+		})
+	}
+}
+
+func TestAnthropicChatBridge_OrdinaryReasoningRoundTripWithOptions(t *testing.T) {
+	upstream := ChatMessage{Role: "assistant", Content: json.RawMessage(`"answer"`), ReasoningContent: "consider the question"}
+	blocks := chatMessageToAnthropicBlocks(upstream)
+	raw, err := json.Marshal(blocks)
+	require.NoError(t, err)
+	back, err := AnthropicToChatCompletionsRequestWithOptions(&AnthropicRequest{
+		Model: "hy3", Messages: []AnthropicMessage{{Role: "assistant", Content: raw}},
+	}, &AnthropicToChatOptions{PreserveAssistantReasoning: true})
+	require.NoError(t, err)
+	require.Len(t, back.Messages, 1)
+	require.Equal(t, upstream.ReasoningContent, back.Messages[0].ReasoningContent)
+	require.Equal(t, upstream.Content, back.Messages[0].Content)
+	require.Empty(t, back.Messages[0].ToolCalls)
 }

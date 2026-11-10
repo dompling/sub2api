@@ -90,17 +90,29 @@ type ConfigAgent struct {
 // ConfigModel 表示 /v3/config 顶层 models 列表中的单个模型条目
 // （比 agent.models 更全面，是 CodeBuddy 后端真实可用的完整模型目录）。
 type ConfigModel struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	Credits            string `json:"credits"`
-	DescriptionZh      string `json:"descriptionZh"`
-	DisabledMultimodal bool   `json:"disabledMultimodal"`
-	MaxAllowedSize     int    `json:"maxAllowedSize"`
-	MaxInputTokens     int    `json:"maxInputTokens"`
-	MaxOutputTokens    int    `json:"maxOutputTokens"`
-	SupportsImages     bool   `json:"supportsImages"`
-	SupportsReasoning  bool   `json:"supportsReasoning"`
-	SupportsToolCall   bool   `json:"supportsToolCall"`
+	ID                 string           `json:"id"`
+	Name               string           `json:"name"`
+	Credits            string           `json:"credits"`
+	DescriptionZh      string           `json:"descriptionZh"`
+	DisabledMultimodal bool             `json:"disabledMultimodal"`
+	MaxAllowedSize     int              `json:"maxAllowedSize"`
+	MaxInputTokens     int              `json:"maxInputTokens"`
+	MaxOutputTokens    int              `json:"maxOutputTokens"`
+	SupportsImages     bool             `json:"supportsImages"`
+	SupportsReasoning  bool             `json:"supportsReasoning"`
+	SupportsToolCall   bool             `json:"supportsToolCall"`
+	Reasoning          *ReasoningConfig `json:"reasoning,omitempty"`
+	OnlyReasoning      bool             `json:"onlyReasoning,omitempty"`
+}
+
+// ReasoningConfig retains the product gateway's own effort vocabulary. It can
+// differ from the model provider's public API (for example GLM max vs xhigh).
+type ReasoningConfig struct {
+	Effort             string   `json:"effort,omitempty"`
+	DefaultEffort      string   `json:"defaultEffort,omitempty"`
+	SupportedEfforts   []string `json:"supportedEfforts,omitempty"`
+	CanDisableThinking bool     `json:"canDisableThinking,omitempty"`
+	Summary            string   `json:"summary,omitempty"`
 }
 
 // EffectiveBaseURL 返回规范化后的基地址，空值回退到默认地址。

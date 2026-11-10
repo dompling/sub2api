@@ -682,6 +682,9 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 // 且必须走 stream 模式（CodeBuddy 不支持非流式请求）。
 func (s *AccountTestService) testCodeBuddyAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
 	ctx := c.Request.Context()
+	if account.ProxyID != nil && account.Proxy == nil {
+		return s.sendErrorAndEnd(c, "Configured proxy is not available")
+	}
 
 	testModelID := modelID
 	if testModelID == "" {
@@ -690,6 +693,20 @@ func (s *AccountTestService) testCodeBuddyAccountConnection(c *gin.Context, acco
 	testModelID = account.GetMappedModel(testModelID)
 
 	accessToken := account.GetCodeBuddyAccessToken()
+	if !account.IsActive() || s.codeBuddyTokenProvider == nil {
+		// Manual probes may recover an inactive account using its still-valid
+		// credential, without bypassing request-path refresh protection.
+		expiresAt := account.GetCredentialAsTime("expires_at")
+		if expiresAt == nil || !time.Now().Before(*expiresAt) {
+			return s.sendErrorAndEnd(c, "Access token is expired or expiry is unknown")
+		}
+	} else {
+		var tokenErr error
+		accessToken, tokenErr = s.codeBuddyTokenProvider.GetAccessToken(ctx, account)
+		if tokenErr != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get access token: %s", tokenErr.Error()))
+		}
+	}
 	if accessToken == "" {
 		return s.sendErrorAndEnd(c, "No access token available")
 	}

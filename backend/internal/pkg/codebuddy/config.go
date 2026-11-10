@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
-	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 // configUserAgent 是 CodeBuddy 接口约定的 User-Agent（与 OAuth 客户端保持一致）。
@@ -51,14 +51,12 @@ func FetchEnabledModelsFromBaseURL(ctx context.Context, baseURL, accessToken, us
 		req.Header.Set("x-user-id", strings.TrimSpace(userID))
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	if proxyURL != "" {
-		if transport, terr := newProxyTransport(proxyURL); terr == nil {
-			client.Transport = transport
-		} else {
-			slog.Warn("codebuddy config: invalid proxy url, falling back to direct connection",
-				"proxy_url", proxyURL, "error", terr)
-		}
+	client, err := newCodeBuddyHTTPClient(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	if client.Transport != nil {
+		defer client.CloseIdleConnections()
 	}
 
 	resp, err := client.Do(req)
@@ -72,7 +70,7 @@ func FetchEnabledModelsFromBaseURL(ctx context.Context, baseURL, accessToken, us
 		return nil, fmt.Errorf("read config response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("codebuddy config returned HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("codebuddy config returned HTTP %d: %s", resp.StatusCode, logredact.RedactText(string(body), "accessToken", "refreshToken"))
 	}
 
 	var env ConfigEnvelope
@@ -80,7 +78,7 @@ func FetchEnabledModelsFromBaseURL(ctx context.Context, baseURL, accessToken, us
 		return nil, fmt.Errorf("parse config envelope: %w", err)
 	}
 	if env.Code != 0 {
-		return nil, fmt.Errorf("codebuddy config error code=%d msg=%s", env.Code, env.Msg)
+		return nil, fmt.Errorf("codebuddy config error code=%d msg=%s", env.Code, logredact.RedactText(env.Msg, "accessToken", "refreshToken"))
 	}
 
 	return ParseModels(env.Data)

@@ -111,6 +111,10 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// /v1/responses 降级到 raw CC 的出站与 forwardAsRawChatCompletions 共用同一个
 	// 独立 Ollama Cloud token 钩子；chatReq.Model 已是模型映射后的 upstreamModel。
 	chatBody = clampOllamaCloudUpstreamMaxTokens(account, chatBody)
+	if account.Platform == PlatformCodeBuddy {
+		chatBody = s.applyCodeBuddyRequestSettings(chatBody, body, account)
+		reasoningEffort = extractOpenAIReasoningEffortFromBody(chatBody, upstreamModel, billingModel, originalModel)
+	}
 	// Keep the final outbound tier for usage-time reconciliation. A policy
 	// filter that removes the field therefore leaves this nil.
 	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
@@ -125,7 +129,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	SetOpsUpstreamModel(c, upstreamModel)
 
 	// Build and send upstream request via the shared CC pipeline
-	apiKey, targetURL, err := s.resolveCCFallbackTarget(account)
+	apiKey, targetURL, err := s.resolveCCFallbackTarget(ctx, account)
 	if err != nil {
 		return nil, err
 	}

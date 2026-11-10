@@ -848,7 +848,7 @@ func (m ChatMessage) reasoningText() string {
 }
 
 func (d ChatDelta) reasoningText() *string {
-	if d.ReasoningContent != nil {
+	if d.ReasoningContent != nil && *d.ReasoningContent != "" {
 		return d.ReasoningContent
 	}
 	return d.Reasoning

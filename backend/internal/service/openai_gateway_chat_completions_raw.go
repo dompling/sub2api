@@ -112,8 +112,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	if upstreamModel != originalModel {
 		upstreamBody = ReplaceModelInBody(body, upstreamModel)
 	}
-	if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(upstreamBody, upstreamModel); normalized {
-		upstreamBody = normalizedBody
+	if account.Platform != PlatformCodeBuddy {
+		if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(upstreamBody, upstreamModel); normalized {
+			upstreamBody = normalizedBody
+		}
 	}
 
 	// 4. Apply OpenAI fast policy on the CC body
@@ -138,8 +140,17 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 		upstreamBody = strippedBody
 	}
 
-	// CodeBuddy: 对每个模型施加 /v3/config 声明的 maxOutputTokens 上限，
-	// 避免超长 max_tokens 请求被上游直接拒绝。
+	// Acquire the usable credential before optional authenticated requests such
+	// as CodeBuddy config lookup or Grok image bridging.
+	token, tokenKind, err := s.getRequestCredential(ctx, c, account)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("account %d missing %s credential", account.ID, tokenKind)
+	}
+
+	// CodeBuddy: 对显式输出预算施加 /v3/config 声明的 maxOutputTokens 上限。
 	if account.Platform == PlatformCodeBuddy {
 		// 上游 content_filter 会因 system prompt 中的商业产品/厂商身份声明
 		// 直接拒答；转发前剥离这些身份声明（保留功能性指令）。
@@ -149,19 +160,13 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 			)
 			upstreamBody = sanitized
 		}
-		if limited, ok := s.applyCodeBuddyMaxTokensLimit(upstreamBody, account); ok {
+		if limited, ok := s.applyCodeBuddyMaxTokensLimit(ctx, upstreamBody, account, token); ok {
 			upstreamBody = limited
 		}
-	}
-
-	// Grok Composer does not accept image_url parts directly, but Grok Build
-	// can describe the images first. Bridge only this exact failure mode.
-	token, tokenKind, err := s.getRequestCredential(ctx, c, account)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(token) == "" {
-		return nil, fmt.Errorf("account %d missing %s credential", account.ID, tokenKind)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		upstreamBody = s.applyCodeBuddyRequestSettings(upstreamBody, body, account)
 	}
 
 	var bridgeUsage OpenAIUsage
@@ -345,41 +350,44 @@ type codeBuddyMetaCacheEntry struct {
 	exp   time.Time
 }
 
-// applyCodeBuddyMaxTokensLimit 对 CodeBuddy 请求体施加每个模型的 max_tokens 上限：
-// 若客户端指定的 max_tokens 超过该模型在 /v3/config 声明的 maxOutputTokens，则截断到上限。
+// applyCodeBuddyMaxTokensLimit 对 CodeBuddy 请求体的两种输出 token 字段施加
+// /v3/config 声明的 maxOutputTokens 上限。
 // 返回 (修改后的 body, 是否发生截断)。
-func (s *OpenAIGatewayService) applyCodeBuddyMaxTokensLimit(body []byte, account *Account) ([]byte, bool) {
+func (s *OpenAIGatewayService) applyCodeBuddyMaxTokensLimit(ctx context.Context, body []byte, account *Account, accessToken string) ([]byte, bool) {
 	requested := gjson.GetBytes(body, "max_tokens")
-	if !requested.Exists() || requested.Type != gjson.Number {
+	completionRequested := gjson.GetBytes(body, "max_completion_tokens")
+	if requested.Type != gjson.Number && completionRequested.Type != gjson.Number {
 		return body, false
 	}
 
-	metas := s.getCodeBuddyModelMeta(account)
+	metas := s.getCodeBuddyModelMeta(ctx, account, accessToken)
 	if len(metas) == 0 {
 		return body, false
 	}
 
 	model := gjson.GetBytes(body, "model").String()
 	for _, m := range metas {
-		if m.ID == model && m.MaxOutputTokens > 0 && int64(m.MaxOutputTokens) < requested.Int() {
-			limited, err := sjson.SetBytes(body, "max_tokens", m.MaxOutputTokens)
-			if err != nil {
-				return body, false
+		if m.ID == model {
+			limited, changed := clampCodeBuddyOutputTokens(body, m.MaxOutputTokens)
+			if changed {
+				logger.L().Debug("codebuddy output tokens clamped to model limit",
+					zap.String("model", model),
+					zap.Int("limit", m.MaxOutputTokens),
+				)
 			}
-			logger.L().Debug("codebuddy max_tokens clamped to model limit",
-				zap.String("model", model),
-				zap.Int("limit", m.MaxOutputTokens),
-				zap.Int64("requested", requested.Int()),
-			)
-			return limited, true
+			return limited, changed
 		}
 	}
 	return body, false
 }
 
 // getCodeBuddyModelMeta 返回账号的 CodeBuddy 模型元数据。
-// 优先使用 OAuth 同步持久化的 credentials；缺失时实时从 /v3/config 拉取并缓存 10 分钟。
-func (s *OpenAIGatewayService) getCodeBuddyModelMeta(account *Account) []codebuddy.ModelInfo {
+// 优先使用 OAuth 同步持久化的 credentials；缺失时使用已获取的有效 token 拉取。
+// 成功缓存 10 分钟，配置请求失败短暂缓存，避免每条消息重复打向上游。
+func (s *OpenAIGatewayService) getCodeBuddyModelMeta(ctx context.Context, account *Account, accessToken string) []codebuddy.ModelInfo {
+	if ctx.Err() != nil {
+		return nil
+	}
 	if metas := parseCodeBuddyModelMeta(account); len(metas) > 0 {
 		return metas
 	}
@@ -388,8 +396,7 @@ func (s *OpenAIGatewayService) getCodeBuddyModelMeta(account *Account) []codebud
 			return c.metas
 		}
 	}
-	at := account.GetCodeBuddyAccessToken()
-	if at == "" {
+	if strings.TrimSpace(accessToken) == "" {
 		return nil
 	}
 	uid := account.GetCredential("uid")
@@ -397,8 +404,11 @@ func (s *OpenAIGatewayService) getCodeBuddyModelMeta(account *Account) []codebud
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	metas, err := codebuddy.FetchEnabledModels(context.Background(), at, uid, proxyURL)
+	metas, err := codebuddy.FetchEnabledModelsFromBaseURL(ctx, account.GetCodeBuddyBaseURL(), accessToken, uid, proxyURL)
 	if err != nil || len(metas) == 0 {
+		if ctx.Err() == nil {
+			codeBuddyMetaCache.Store(account.ID, codeBuddyMetaCacheEntry{exp: time.Now().Add(30 * time.Second)})
+		}
 		return nil
 	}
 	codeBuddyMetaCache.Store(account.ID, codeBuddyMetaCacheEntry{metas: metas, exp: time.Now().Add(10 * time.Minute)})
