@@ -1253,14 +1253,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 		source := modelListingSource(platform, availableModels, defaultModelIDsForPlatform(platform))
 		models := filterModelsByGroupAllowlist(platform, source, apiKey.Group.ModelAllowlist)
-		writeAllowlistedModelsList(c, platform, filterModelsByKeyWhitelist(models, apiKey))
+		h.writeModelsList(c, platform, groupID, filterModelsByKeyWhitelist(models, apiKey))
 		return
 	}
 	// Key 级模型白名单：过滤展示列表，与请求侧 RequireAllowedModels 校验一致。
 	availableModels = filterModelsByKeyWhitelist(availableModels, apiKey)
 
 	if len(availableModels) > 0 || (platform == service.PlatformOpenAI && availableModels != nil) {
-		writeModelsList(c, platform, availableModels)
+		h.writeModelsList(c, platform, groupID, availableModels)
 		return
 	}
 
@@ -1268,7 +1268,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	// 避免展示 Key 实际不可用的模型。
 	defaultFallback := filterModelsByKeyWhitelist(defaultModelIDsForPlatform(platform), apiKey)
 	if len(defaultFallback) > 0 || (apiKey != nil && len(apiKey.AllowedModels) > 0) {
-		writeModelsList(c, platform, defaultFallback)
+		h.writeModelsList(c, platform, groupID, defaultFallback)
 		return
 	}
 
